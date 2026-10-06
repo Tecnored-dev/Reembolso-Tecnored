@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { formatVersion, rotuloPapel } from '@/utils'
+import {
+  formatarData,
+  formatarMoeda,
+  formatVersion,
+  lerValor,
+  mensagemErro,
+  rotuloPapel,
+} from '@/utils'
 import type { AppConfig } from '@/types'
 
 const base: AppConfig = {
@@ -27,5 +34,38 @@ describe('formatVersion', () => {
 describe('rotuloPapel', () => {
   it('traduz os papéis', () => {
     expect(rotuloPapel('financeiro')).toBe('Financeiro')
+  })
+})
+
+describe('formatação', () => {
+  it('moeda em reais', () => {
+    expect(formatarMoeda('1234.5').replace(/\s/g, ' ')).toBe('R$ 1.234,50')
+  })
+  it('data sem fuso', () => {
+    expect(formatarData('2026-10-06')).toBe('06/10/2026')
+    expect(formatarData(null)).toBe('—')
+  })
+})
+
+describe('mensagemErro', () => {
+  it('usa o detail da API quando é texto', () => {
+    expect(mensagemErro({ response: { data: { detail: 'Gestor não encontrado' } } })).toBe(
+      'Gestor não encontrado'
+    )
+  })
+  it('erro de validação do FastAPI vira mensagem genérica', () => {
+    expect(mensagemErro({ response: { data: { detail: [{ loc: ['x'] }] } } })).toBe(
+      'Confira os campos preenchidos.'
+    )
+  })
+})
+
+describe('lerValor', () => {
+  it('aceita vírgula, ponto e milhar', () => {
+    expect(lerValor('45,90')).toBe(45.9)
+    expect(lerValor('45.90')).toBe(45.9)
+    expect(lerValor('1.234,56')).toBe(1234.56)
+    expect(lerValor('R$ 10')).toBe(10)
+    expect(lerValor('')).toBeNaN()
   })
 })
