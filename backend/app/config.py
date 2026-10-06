@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from decimal import Decimal
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -17,6 +18,12 @@ from pathlib import Path
 APP_TITLE = "Reembolso"
 APP_WELCOME_MESSAGE = "Reembolso de alimentação e viagem — Tecnored"
 SESSION_DURATION_HOURS = 8
+
+# Regras de negócio (decididas com a Thais — ver docs do projeto)
+LIMITE_REFEICAO_DIA = Decimal("135.00")  # política: só ALERTA, não bloqueia
+DIAS_LEMBRETE_DEVOLVIDO = 5  # lembrete ao colaborador com solicitação devolvida parada
+DIAS_EXPIRACAO_DEVOLVIDO = 7  # depois disso, cancela
+ARQUIVO_TAMANHO_MAX = 10 * 1024 * 1024  # 10 MB por nota
 
 AMBIENTES = ("local", "hml", "main")
 
@@ -77,6 +84,9 @@ class Settings:
     storage_local_dir: str = field(
         default_factory=lambda: os.environ.get("STORAGE_LOCAL_DIR", "/data/arquivos")
     )
+
+    # Tarefas periódicas (expiração de devolvidas) rodando dentro da API.
+    tarefas_automaticas: bool = field(default_factory=lambda: _bool("TAREFAS_AUTOMATICAS", "true"))
 
     @property
     def azure_configurado(self) -> bool:
