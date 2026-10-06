@@ -1,0 +1,126 @@
+"""Login (Azure AD / OIDC), callback, logout e login de desenvolvimento.
+
+Rotas de navegação de página inteira (redirects) — o frontend aponta para
+elas com <a href>, nunca via axios (fluxo OAuth). Portado do Hello-World,
+trocando a sessão em memória pela sessão persistida no banco.
+"""
+
+from __future__ import annotations
+
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import RedirectResponse
+from msal import ConfidentialClientApplication
+from sqlalchemy.orm import Session
+
+from app.auth import sessoes
+from app.auth.deps import definir_cookie
+from app.auth.papeis import PAPEIS_ESPECIAIS, resolver_papeis
+from app.config import Settings, get_settings
+from app.db import get_db
+
+router = APIRouter(tags=["auth"])
+
+SCOPES = ["GroupMember.Read.All"]  # openid/profile/email são geridos pelo MSAL
+
+
+def _msal(settings: Settings) -> ConfidentialClientApplication:
+    return ConfidentialClientApplication(
+        settings.azure_client_id,
+        authority=f"https://login.microsoftonline.com/{settings.azure_tenant_id}",
+        client_credential=settings.azure_client_secret,
+    )
+
+
+@router.get("/login")
+def login(settings: Settings = Depends(get_settings)):
+    if not settings.azure_configurado:
+        return RedirectResponse(f"{settings.frontend_url}/?auth_error=azure_nao_configurado")
+    url = _msal(settings).get_authorization_request_url(
+        scopes=SCOPES,
+        redirect_uri=settings.azure_redirect_uri,
+        prompt=settings.azure_login_prompt or None,
+    )
+    return RedirectResponse(url)
+
+
+@router.get("/auth/callback")
+async def auth_callback(
+    code: str | None = None,
+    error: str | None = None,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
+    if error or not code or not settings.azure_configurado:
+        return RedirectResponse(f"{settings.frontend_url}/?auth_error={error or 'unknown'}")
+
+    result = _msal(settings).acquire_token_by_authorization_code(
+        code=code, scopes=SCOPES, redirect_uri=settings.azure_redirect_uri
+    )
+    if "error" in result:
+        return RedirectResponse(f"{settings.frontend_url}/?auth_error={result.get('error')}")
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(
+            "https://graph.microsoft.com/v1.0/me/memberOf",
+            headers={"Authorization": f"Bearer {result['access_token']}"},
+            timeout=10.0,
+        )
+    grupos = [g["id"] for g in resp.json().get("value", []) if g.get("id")]
+
+    claims = result.get("id_token_claims", {})
+    email = claims.get("preferred_username", "")
+    nome = claims.get("name") or email or "Desconhecido"
+    token = sessoes.criar_sessao(
+        db,
+        email=email,
+        nome=nome,
+        grupos=grupos,
+        papeis=resolver_papeis(grupos, settings),
+        via="microsoft",
+    )
+    response = RedirectResponse(f"{settings.frontend_url}/inicio", status_code=302)
+    definir_cookie(response, token, settings)
+    return response
+
+
+@router.get("/logout")
+def logout(
+    request: Request,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
+    via = sessoes.encerrar_sessao(db, request.cookies.get(sessoes.COOKIE))
+    destino = (
+        f"https://{settings.cf_access_team_domain}/cdn-cgi/access/logout"
+        if via == "cloudflare" and settings.cf_access_team_domain
+        else settings.frontend_url
+    )
+    response = RedirectResponse(destino, status_code=302)
+    response.delete_cookie(sessoes.COOKIE)
+    return response
+
+
+@router.get("/dev/login", include_in_schema=False)
+def dev_login(
+    email: str = "dev@tecnored.com.br",
+    nome: str = "Dev Local",
+    papeis: str = "",
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
+    """Login SEM Microsoft, só em APP_ENV=local com DEV_LOGIN_ENABLED=true.
+
+    Existe para dar para trabalhar antes do App Registration ficar pronto e
+    para testar cada papel: /dev/login?email=gestor@x&papeis=gestor.
+    Em hml/main a API nem sobe com isso ligado (Settings.validar).
+    """
+    if not (settings.dev_login_enabled and settings.app_env == "local"):
+        raise HTTPException(status_code=404)
+    escolhidos = [p for p in papeis.split(",") if p in PAPEIS_ESPECIAIS]
+    token = sessoes.criar_sessao(
+        db, email=email, nome=nome, grupos=[], papeis=escolhidos, via="dev"
+    )
+    response = RedirectResponse(f"{settings.frontend_url}/inicio", status_code=302)
+    definir_cookie(response, token, settings)
+    return response

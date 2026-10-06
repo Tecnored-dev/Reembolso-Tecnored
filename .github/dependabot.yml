@@ -1,0 +1,95 @@
+# ===========================================================================
+# Dependabot — Atualizações automáticas de dependências
+#
+# O Dependabot monitora as dependências do projeto e abre Pull Requests
+# automáticos quando novas versões são lançadas.
+#
+# Os PRs são abertos contra a branch "hml" — seguindo o fluxo normal
+# de promoção de ambiente: hml → validação → main.
+# Isso garante que atualizações sejam validadas antes de chegar em produção.
+#
+# Cada PR gerado passa pelo pipeline normalmente — o Admin avalia,
+# testa e decide se aprova ou rejeita, como qualquer outro PR.
+#
+# Documentação: https://docs.github.com/en/code-security/dependabot
+# ===========================================================================
+
+version: 2
+updates:
+
+  # -------------------------------------------------------------------------
+  # Python — pacotes do backend/requirements.txt (FastAPI)
+  # Monitora cada pacote individualmente e abre um PR por atualização
+  # -------------------------------------------------------------------------
+  - package-ecosystem: "pip"
+    directory: "/backend"           # pasta onde está o requirements.txt
+    target-branch: "hml"         # PR aberto contra hml, não main
+    schedule:
+      interval: "weekly"            # verifica toda semana (segunda-feira)
+    open-pull-requests-limit: 5     # máximo de PRs abertos simultaneamente
+    commit-message:
+      prefix: "chore"              # título/commit vira "chore: bump X from A to B" — seção 13 do README
+    labels:
+      - "chore"
+      - "dependabot"
+
+  # -------------------------------------------------------------------------
+  # npm — pacotes do frontend/package.json (React + Vite)
+  # Monitora cada pacote individualmente e abre um PR por atualização
+  # -------------------------------------------------------------------------
+  - package-ecosystem: "npm"
+    directory: "/frontend"          # pasta onde está o package.json
+    target-branch: "hml"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore"
+    labels:
+      - "chore"
+      - "dependabot"
+
+  # -------------------------------------------------------------------------
+  # Docker — imagem base do Dockerfile do backend (python:3.12-slim)
+  # Monitora a linha FROM e abre PR quando há nova versão da imagem
+  # Imagens mudam com menos frequência — verificação mensal é suficiente
+  # -------------------------------------------------------------------------
+  - package-ecosystem: "docker"
+    directory: "/backend"           # pasta onde está o Dockerfile
+    target-branch: "hml"
+    schedule:
+      interval: "monthly"
+    commit-message:
+      prefix: "chore"
+    labels:
+      - "chore"
+      - "dependabot"
+
+  # -------------------------------------------------------------------------
+  # Docker — imagens base do Dockerfile do frontend (node:20-alpine, nginx:alpine)
+  # -------------------------------------------------------------------------
+  - package-ecosystem: "docker"
+    directory: "/frontend"          # pasta onde está o Dockerfile
+    target-branch: "hml"
+    schedule:
+      interval: "monthly"
+    commit-message:
+      prefix: "chore"
+    labels:
+      - "chore"
+      - "dependabot"
+
+  # -------------------------------------------------------------------------
+  # GitHub Actions — versões das actions usadas nos workflows
+  # ex: actions/checkout@v4 → abre PR quando sair v5
+  # -------------------------------------------------------------------------
+  - package-ecosystem: "github-actions"
+    directory: "/"                  # sempre raiz do repositório
+    target-branch: "hml"
+    schedule:
+      interval: "monthly"
+    commit-message:
+      prefix: "chore"
+    labels:
+      - "chore"
+      - "dependabot"

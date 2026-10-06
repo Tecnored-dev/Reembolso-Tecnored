@@ -1,0 +1,53 @@
+# ===========================================================================
+# IMPORTANTE: O arquivo .env contém credenciais e NUNCA deve ser commitado.
+# ===========================================================================
+
+# Ambiente
+.env
+.env.local
+.env.*.local
+
+# Override local — nunca vai para o servidor
+docker-compose.override.yml
+
+# Arquivo temporário do semantic-release (verifyReleaseCmd, .releaserc.json)
+# — usado só para ler nextRelease.version dentro do workflow, nunca commitado
+.next-version
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+dist/
+build/
+*.egg-info/
+
+# Node / Frontend
+node_modules/
+frontend/dist/
+frontend/.vite/
+*.tsbuildinfo
+*.local
+
+# Docker
+*.log
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbbs.db
+TEMP/
+
+# Extras Reembolso
+.venv/
+.ruff_cache/
+*.db

@@ -1,0 +1,86 @@
+# ---------------------------------------------------------------------------
+# Reembolso-Tecnored — mesmo padrão do Hello-World (tecnored-dev/Hello-World)
+#
+# Usado pelo Dokploy em hml/main e, com o docker-compose.override.yml, em LOCAL.
+# Não publica portas (o Traefik do Dokploy acessa pela rede interna) e não
+# tem banco: em hml/main o backend fala com o TUPSRVDB02 (PostgreSQL 17) pelo
+# DB_URL. Em LOCAL o override sobe um Postgres 17 e publica as portas.
+# ---------------------------------------------------------------------------
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: reembolso-backend-${APP_ENV}:latest
+    container_name: reembolso-backend-${APP_ENV}
+    restart: unless-stopped
+    environment:
+      - APP_ENV=${APP_ENV:-local}
+      # postgresql+psycopg://usuario:senha@tupsrvdb02.tecpar.local:5432/banco
+      - DB_URL=${DB_URL}
+      - AZURE_CLIENT_ID=${AZURE_CLIENT_ID:-}
+      - AZURE_CLIENT_SECRET=${AZURE_CLIENT_SECRET:-}
+      - AZURE_TENANT_ID=${AZURE_TENANT_ID:-}
+      - AZURE_REDIRECT_URI=${AZURE_REDIRECT_URI}
+      - AZURE_LOGIN_PROMPT=${AZURE_LOGIN_PROMPT:-select_account}
+      - AZURE_GROUP_GESTOR=${AZURE_GROUP_GESTOR:-}
+      - AZURE_GROUP_FINANCEIRO=${AZURE_GROUP_FINANCEIRO:-}
+      - AZURE_GROUP_ADMIN=${AZURE_GROUP_ADMIN:-}
+      - CF_ACCESS_TEAM_DOMAIN=${CF_ACCESS_TEAM_DOMAIN:-}
+      - APP_BG_COLOR=${APP_BG_COLOR:-#32746a}
+      - ENABLE_API_DOCS=${ENABLE_API_DOCS:-false}
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:8080}
+      # Só em LOCAL. A API se recusa a subir com isso ligado em hml/main.
+      - DEV_LOGIN_ENABLED=${DEV_LOGIN_ENABLED:-false}
+      # Onde ficam os arquivos das notas: "local" (volume /data) por enquanto;
+      # S3 ou SharePoint quando a TI decidir.
+      - STORAGE_BACKEND=${STORAGE_BACKEND:-local}
+      - STORAGE_LOCAL_DIR=${STORAGE_LOCAL_DIR:-/data/arquivos}
+    volumes:
+      - reembolso_data:/data
+    networks:
+      - default
+      - dokploy-network
+    healthcheck:
+      test:
+        - "CMD"
+        - "python"
+        - "-c"
+        - "import urllib.request,sys; sys.exit(0) if urllib.request.urlopen('http://127.0.0.1:8000/health').status == 200 else sys.exit(1)"
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      # Mais folga que no Hello-World: roda as migrations antes de subir.
+      start_period: 40s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - VITE_API_URL=${VITE_API_URL:-http://localhost:8081}
+        - VITE_APP_ENV=${APP_ENV:-local}
+    image: reembolso-frontend-${APP_ENV}:latest
+    container_name: reembolso-frontend-${APP_ENV}
+    restart: unless-stopped
+    networks:
+      - default
+      - dokploy-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  reembolso_data:
+    name: reembolso_data_${APP_ENV}
+
+networks:
+  dokploy-network:
+    external: true

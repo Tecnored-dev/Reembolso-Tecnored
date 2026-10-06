@@ -1,0 +1,49 @@
+# ---------------------------------------------------------------------------
+# Override LOCAL (copie para docker-compose.override.yml — está no .gitignore)
+#
+# 1. Publica as portas no host (8081 API, 8080 front, 5432 banco).
+# 2. Sobe um PostgreSQL 17 (mesma versão do TUPSRVDB02), orientação do Marcos:
+#    trabalhar local e depois exportar/importar para hml/main.
+# 3. Troca a dokploy-network para uma rede local (ela só existe no Dokploy).
+#
+# No .env local:
+#   DB_URL=postgresql+psycopg://reembolso:reembolso@db:5432/reembolso
+# ---------------------------------------------------------------------------
+
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: reembolso-db-${APP_ENV:-local}
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=reembolso
+      - POSTGRES_PASSWORD=reembolso
+      - POSTGRES_DB=reembolso
+    ports:
+      - "${PORT_DB:-5432}:5432"
+    volumes:
+      - reembolso_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U reembolso -d reembolso"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    ports:
+      - "${PORT_BACKEND:-8081}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  frontend:
+    ports:
+      - "${PORT_FRONTEND:-8080}:80"
+
+volumes:
+  reembolso_pgdata:
+    name: reembolso_pgdata_local
+
+networks:
+  dokploy-network:
+    external: false

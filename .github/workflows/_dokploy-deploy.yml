@@ -1,0 +1,182 @@
+# ===========================================================================
+# Disparar redeploy no Dokploy — workflow REUTILIZÁVEL (workflow_call)
+#
+# Não dispara por conta própria — só existe pra ser chamado pelo job "deploy"
+# de release_deploy.yml (hml e main, mesmo arquivo), passando qual
+# Environment resolver. Concentra a lógica de acionar o webhook do Dokploy
+# num só lugar, em vez de duplicar por branch.
+#
+# CÓDIGOS DE SAÍDA:
+#   10        DOKPLOY_WEBHOOK_URL não configurado no Environment resolvido
+#   21        Falha de conexão (DNS, timeout, TLS) — runner não alcançou o Dokploy
+#   22        HTTP 404 "Compose Not Found"  — Webhook URL aponta para um Compose inexistente
+#   23        HTTP 301 "Branch Not Match"   — branch do Provider do Compose diverge do push
+#   20        Qualquer outro HTTP diferente de 200 (fallback genérico)
+#
+# Mapeamento validado manualmente via Postman contra o Dokploy real: endereço
+# errado → falha de conexão; endereço certo + token errado → 404 "Compose Not
+# Found"; token certo + branch errada no Provider → 301 "Branch Not Match";
+# tudo certo → 200 "Compose deployed successfully".
+# ===========================================================================
+
+name: Disparar redeploy no Dokploy (reutilizável)
+
+on:
+  workflow_call:
+    inputs:
+      environment_name:
+        description: "Nome do GitHub Environment a resolver (hml ou main)"
+        required: true
+        type: string
+
+jobs:
+  deploy:
+    name: Disparar redeploy no Dokploy (${{ inputs.environment_name }})
+    runs-on: [self-hosted, tupsrvdocker01]
+    environment: ${{ inputs.environment_name }}
+
+    steps:
+      # ------------------------------------------------------------------
+      # 1. Valida que o secret obrigatório está configurado no Environment resolvido
+      # ------------------------------------------------------------------
+      - name: Valida configuração
+        run: |
+          echo "🌎 Environment resolvido: ${{ inputs.environment_name }}"
+
+          WEBHOOK_URL="${{ secrets.DOKPLOY_WEBHOOK_URL }}"
+
+          if [ -z "$WEBHOOK_URL" ]; then
+            echo "❌ [10] DOKPLOY_WEBHOOK_URL não configurado no Environment '${{ inputs.environment_name }}'"
+            echo "   Settings > Environments > ${{ inputs.environment_name }} > Environment secrets"
+            exit 10
+          fi
+
+          # Mostra só domínio + path + os 3 primeiros caracteres do token final;
+          # o restante é substituído por "*" na quantidade exata do que falta,
+          # o suficiente para conferir visualmente contra o Dokploy sem expor o
+          # segredo inteiro (a URL funciona como credencial de deploy).
+          # Se o formato não bater com o esperado, não imprime a URL crua —
+          # evita vazar o secret por engano no log.
+          PREFIX=$(printf '%s' "$WEBHOOK_URL" | sed -E 's#(https://[^/]+/.+/).*#\1#')
+          TOKEN=$(printf '%s' "$WEBHOOK_URL" | sed -E 's#https://[^/]+/.+/##')
+
+          if [ "$PREFIX" = "$WEBHOOK_URL" ] || [ ${#TOKEN} -lt 3 ]; then
+            MASKED="(formato inesperado — valor omitido por segurança)"
+          else
+            VISIBLE="${TOKEN:0:3}"
+            HIDDEN_LEN=$((${#TOKEN} - 3))
+            HIDDEN=$(printf '%*s' "$HIDDEN_LEN" '' | tr ' ' '*')
+            MASKED="${PREFIX}${VISIBLE}${HIDDEN}"
+          fi
+
+          echo "✅ Secret DOKPLOY_WEBHOOK_URL presente para '${{ inputs.environment_name }}': $MASKED"
+
+      # ------------------------------------------------------------------
+      # 2. Dispara o redeploy no Dokploy
+      #
+      #    Formato exigido pelo Dokploy (simula um webhook de push do GitHub):
+      #      Header  X-GitHub-Event: push
+      #      Body    { "ref": "refs/heads/<branch>", "repository": { "full_name": "<owner>/<repo>" } }
+      # ------------------------------------------------------------------
+      - name: Disparar redeploy no Dokploy
+        id: dokploy_deploy
+        run: |
+          echo "🚀 Disparando redeploy no Dokploy..."
+          echo "   Ambiente    : ${{ inputs.environment_name }}"
+          echo "   Repositório : ${{ github.repository }}"
+          echo "   Commit      : ${{ github.sha }}"
+
+          # set +e: os steps do Actions rodam com "bash -e" por padrão — sem isso,
+          # uma falha do curl (ex: DNS não resolve) aborta o script imediatamente
+          # na linha abaixo, antes de chegarmos ao tratamento por código de erro.
+          set +e
+          HTTP_STATUS=$(curl --silent --show-error --output /tmp/dokploy_response.json \
+            --write-out "%{http_code}" \
+            --max-time 20 \
+            --request POST \
+            --header "Content-Type: application/json" \
+            --header "X-GitHub-Event: push" \
+            --data "{
+              \"ref\": \"refs/heads/${{ inputs.environment_name }}\",
+              \"repository\": { \"full_name\": \"${{ github.repository }}\" }
+            }" \
+            "${{ secrets.DOKPLOY_WEBHOOK_URL }}")
+          CURL_EXIT=$?
+          set -e
+
+          echo "HTTP Status : $HTTP_STATUS"
+          echo "curl exit   : $CURL_EXIT"
+          [ -s /tmp/dokploy_response.json ] && cat /tmp/dokploy_response.json
+
+          # -----------------------------------------------------------
+          # Falha de conexão — o runner nem chegou a receber uma resposta
+          # HTTP (DNS não resolveu, host recusou a conexão, timeout, TLS).
+          # Nesses casos o curl grava "000" em %{http_code} e retorna erro.
+          # -----------------------------------------------------------
+          if [ "$CURL_EXIT" != "0" ] || [ "$HTTP_STATUS" = "000" ]; then
+            echo ""
+            case "$CURL_EXIT" in
+              6)     echo "❌ [21] Não foi possível resolver o endereço do Dokploy (falha de DNS)." ;;
+              7)     echo "❌ [21] Conexão recusada pelo Dokploy — host/porta incorretos ou serviço fora do ar." ;;
+              28)    echo "❌ [21] Timeout ao conectar no Dokploy — confira se o runner alcança o host pela rede interna." ;;
+              35|60) echo "❌ [21] Erro de TLS/certificado ao conectar no Dokploy." ;;
+              *)     echo "❌ [21] Falha de conexão com o Dokploy (curl exit $CURL_EXIT)." ;;
+            esac
+            echo "   Confira o endereço na Webhook URL configurada em:"
+            echo "   Settings > Environments > ${{ inputs.environment_name }} > Environment secrets > DOKPLOY_WEBHOOK_URL"
+            exit 21
+          fi
+
+          if [ "$HTTP_STATUS" = "200" ]; then
+            echo "✅ Redeploy disparado com sucesso"
+            exit 0
+          fi
+
+          case "$HTTP_STATUS" in
+            404)
+              echo "❌ [22] Dokploy respondeu 404 (\"Compose Not Found\") — a Webhook URL aponta para um Compose que não existe."
+              echo "   Confira se o secret DOKPLOY_WEBHOOK_URL do Environment '${{ inputs.environment_name }}' foi copiado"
+              echo "   corretamente do Compose certo no Dokploy — o token de acesso faz parte da própria URL."
+              exit 22
+              ;;
+            301)
+              echo "❌ [23] Dokploy respondeu 301 (\"Branch Not Match\") — a branch configurada no Provider do Compose"
+              echo "   não é '${{ inputs.environment_name }}'. Ajuste em: Dokploy > Compose > Provider > Branch."
+              exit 23
+              ;;
+            *)
+              echo "❌ [20] Falha ao disparar redeploy (HTTP $HTTP_STATUS) — resposta não reconhecida."
+              exit 20
+              ;;
+          esac
+
+      # ------------------------------------------------------------------
+      # 3. Resumo de sucesso
+      # ------------------------------------------------------------------
+      - name: Resumo do deploy
+        if: success()
+        run: |
+          echo "## ✅ Deploy (Dokploy) concluído — ${{ inputs.environment_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Campo | Valor |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| Ambiente | ${{ inputs.environment_name }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Autor | ${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
+
+      # ------------------------------------------------------------------
+      # 4. Resumo de falha
+      # ------------------------------------------------------------------
+      - name: Notifica falha
+        if: failure()
+        run: |
+          echo "## ❌ Deploy (Dokploy) falhou — ${{ inputs.environment_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Verifique os logs acima para identificar o problema." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Códigos de saída:**" >> $GITHUB_STEP_SUMMARY
+          echo "- \`10\` DOKPLOY_WEBHOOK_URL não configurado" >> $GITHUB_STEP_SUMMARY
+          echo "- \`21\` Falha de conexão (DNS/timeout/TLS) — runner não alcançou o Dokploy" >> $GITHUB_STEP_SUMMARY
+          echo "- \`22\` HTTP 404 \"Compose Not Found\" — Webhook URL aponta para Compose inexistente" >> $GITHUB_STEP_SUMMARY
+          echo "- \`23\` HTTP 301 \"Branch Not Match\" — branch do Provider diverge do push" >> $GITHUB_STEP_SUMMARY
+          echo "- \`20\` Outro HTTP diferente de 200 (fallback genérico)" >> $GITHUB_STEP_SUMMARY

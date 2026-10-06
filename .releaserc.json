@@ -1,0 +1,20 @@
+{
+  "branches": [
+    "main",
+    { "name": "hml", "prerelease": true }
+  ],
+  "plugins": [
+    "@semantic-release/commit-analyzer",
+    "@semantic-release/release-notes-generator",
+    ["@semantic-release/changelog", { "changelogFile": "CHANGELOG.md" }],
+    ["@semantic-release/exec", {
+      "verifyReleaseCmd": "echo ${nextRelease.version} > .next-version",
+      "prepareCmd": "echo ${nextRelease.version} > backend/VERSION && date -u +%Y-%m-%d > backend/RELEASE_DATE && git rev-parse --short HEAD > backend/COMMIT_HASH"
+    }],
+    ["@semantic-release/git", {
+      "assets": ["CHANGELOG.md", "backend/VERSION", "backend/RELEASE_DATE", "backend/COMMIT_HASH"],
+      "message": "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
+    }],
+    "@semantic-release/github"
+  ]
+}

@@ -1,0 +1,238 @@
+# ===========================================================================
+# Release — Versionamento Semântico (semantic-release) + Deploy
+#
+# Arquivo único pra "hml" e "main" — a única diferença entre as duas é qual
+# Environment resolver, e isso já é resolvido dinamicamente via
+# "${{ github.ref_name }}" (igual o antigo deploy_dokploy.yml fazia só pro
+# deploy; agora vale pro release inteiro). Mas o job "release" tem dois
+# comportamentos BEM diferentes por branch — só "main" publica de verdade:
+#
+#   main → roda o semantic-release "de verdade": calcula o bump, gera/
+#          atualiza CHANGELOG.md, cria a tag + uma GitHub Release, comita
+#          backend/VERSION/RELEASE_DATE/COMMIT_HASH de volta na branch.
+#
+#   hml  → roda o semantic-release em "--dry-run": calcula qual SERIA a
+#          próxima versão (sem tag, sem CHANGELOG, sem GitHub Release —
+#          nada disso é criado; dry-run pula as etapas de publish/prepare)
+#          e só escreve esse número em backend/VERSION/RELEASE_DATE/
+#          COMMIT_HASH, como uma PRÉVIA de "o que main vai virar quando
+#          isso for promovido". Se não houver nada de novo desde o último
+#          release de main, não faz nada (hml mostra a mesma versão de main).
+#
+# Por que assim, e não "hml" como branch de prerelease do semantic-release
+# (`{ name: "hml", prerelease: true }`, versão "X.Y.Z-hml.N", como era
+# antes): essa abordagem cria uma trilha de release PRÓPRIA pra hml — tag
+# própria, CHANGELOG próprio, GitHub Release própria — pensada pra quem
+# itera várias vezes em staging antes de fechar uma versão final. Aqui o
+# fluxo é linear (promove uma vez só), e isso só gerava ruído: CHANGELOG.md
+# de hml duplicando entradas a cada sincronização com main, número de hml
+# ficando temporariamente "atrás" do de main até a próxima sincronização.
+# Com dry-run, hml nunca cria release própria — só prevê o número, que fica
+# idêntico ao que main vai publicar quando a mesma mudança for promovida.
+#
+# Fluxo:
+#   Push em hml OU main
+#     → Job "release": ver acima (main publica, hml só prevê)
+#     → Job "check-paths" (em paralelo, olha o push ORIGINAL — não o commit
+#       que "release" acabou de criar): backend/**, frontend/** ou
+#       docker-compose.yml mudaram?
+#     → Job "deploy" (needs: release + check-paths, só roda se check-paths
+#       disse que sim): dispara o webhook do Dokploy do Environment
+#       resolvido (${{ github.ref_name }}).
+#
+#   Rodar "deploy" DEPOIS de "release" (nunca em paralelo) garante um único
+#   redeploy por push — se houve bump, o commit com o backend/VERSION novo
+#   já está na branch ANTES do webhook disparar, então o Dokploy já builda
+#   com a versão certa.
+#
+# Por que "docs:"/"chore:" não decidem sozinhos se deploya:
+#   Bump de versão e necessidade de deploy são perguntas diferentes. Um
+#   "chore: bump fastapi" (Dependabot) muda backend/requirements.txt — não
+#   gera bump de versão, mas PRECISA deployar. Um "docs: corrige typo" só
+#   toca README.md — nem bump, nem deploy. Por isso o "check-paths" olha
+#   ARQUIVOS mudados, não o prefixo do commit.
+#
+# IMPORTANTE — Por que o checkout usa secrets.RELEASE_TOKEN (PAT) e não o
+# GITHUB_TOKEN padrão:
+#   O GITHUB_TOKEN padrão de um workflow não tem permissão de dar push em
+#   nenhuma branch por padrão — só um token com escopo de escrita no
+#   repositório consegue. É esse mesmo PAT que autoriza tanto o
+#   @semantic-release/git (em main) quanto o commit manual de prévia (em
+#   hml) a escrever de volta na branch (mesmo secret, mesmo workflow,
+#   ambientes resolvidos pelo Environment do GitHub).
+#
+# Configuração necessária no repositório GitHub:
+#   Settings > Secrets and variables > Actions > New repository secret
+#     RELEASE_TOKEN   Fine-grained PAT com permissão "Contents: Read and write",
+#                      "Pull requests: Read and write" e "Issues: Read and write"
+#                      no repositório tecnored-dev/Reembolso-Tecnored (seção 13 do README do Hello-World)
+# ===========================================================================
+
+name: Release e Deploy
+
+run-name: Release e Deploy — ${{ github.ref_name }} (${{ github.actor }})
+
+on:
+  push:
+    branches:
+      - hml
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Calcular versão e gerar Changelog (${{ github.ref_name }})
+    runs-on: [self-hosted, tupsrvdocker01]
+    steps:
+      - name: Checkout (histórico completo — semantic-release precisa das tags)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_TOKEN }}
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Executar semantic-release (main — release oficial)
+        if: github.ref_name == 'main'
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          # O usuário "github-runner" foi criado com --no-create-home (seção 11.2)
+          # — /home/github-runner não existe, e o usuário não tem permissão de
+          # criá-lo dentro de /home (pertence ao root). Sem isso, o npm/npx tenta
+          # usar $HOME/.npm como cache e falha com EACCES. runner.temp já existe
+          # e é gravável, então redireciona o HOME só pra esse step. "runner" só
+          # é um contexto válido dentro de steps, não em env de nível de job.
+          HOME: ${{ runner.temp }}
+        run: |
+          npx --yes \
+            -p semantic-release \
+            -p @semantic-release/commit-analyzer \
+            -p @semantic-release/release-notes-generator \
+            -p @semantic-release/changelog \
+            -p @semantic-release/exec \
+            -p @semantic-release/git \
+            -p @semantic-release/github \
+            semantic-release
+
+      - name: Calcular prévia de versão (hml — dry-run, sem publicar)
+        if: github.ref_name == 'hml'
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          HOME: ${{ runner.temp }}
+        run: |
+          # --dry-run roda verifyConditions/analyzeCommits/verifyRelease/
+          # generateNotes normalmente, mas PULA prepare/publish/addChannel —
+          # ou seja: nenhuma tag, nenhum CHANGELOG.md, nenhuma GitHub Release
+          # é criada aqui. O único jeito confiável de saber qual seria a
+          # próxima versão é via o hook "verifyReleaseCmd" do
+          # @semantic-release/exec (.releaserc.json) — ele roda na etapa
+          # "verifyRelease", que dry-run NÃO pula, e escreve
+          # "${nextRelease.version}" em ".next-version". Ler isso é mais
+          # confiável do que tentar extrair a versão do texto do log.
+          rm -f .next-version
+
+          npx --yes \
+            -p semantic-release \
+            -p @semantic-release/commit-analyzer \
+            -p @semantic-release/release-notes-generator \
+            -p @semantic-release/changelog \
+            -p @semantic-release/exec \
+            -p @semantic-release/git \
+            -p @semantic-release/github \
+            semantic-release --dry-run
+
+          if [ -f .next-version ]; then
+            NEXT_FULL=$(cat .next-version)
+            # hml está configurada como branch de prerelease em .releaserc.json
+            # (necessário pro semantic-release nem sequer abortar a execução
+            # nela) — isso faz o dry-run calcular algo como "1.3.0-hml.1".
+            # Como aqui é só prévia (sem release própria), remove o sufixo
+            # "-hml.N": queremos mostrar o número puro que main vai publicar
+            # quando isso for promovido, não uma numeração paralela.
+            NEXT="${NEXT_FULL%%-*}"
+            echo "📦 Prévia calculada: $NEXT (interno: $NEXT_FULL)"
+
+            echo "$NEXT" > backend/VERSION
+            date -u +%Y-%m-%d > backend/RELEASE_DATE
+            git rev-parse --short HEAD > backend/COMMIT_HASH
+
+            if ! git diff --quiet -- backend/VERSION backend/RELEASE_DATE backend/COMMIT_HASH; then
+              git config user.name "semantic-release-bot"
+              git config user.email "semantic-release-bot@martynus.net"
+              git add backend/VERSION backend/RELEASE_DATE backend/COMMIT_HASH
+              git commit -m "chore: atualiza prévia de versão para $NEXT [skip ci]"
+              git push origin HEAD:${{ github.ref_name }}
+            else
+              echo "Prévia já está atualizada — nada para commitar."
+            fi
+          else
+            echo "ℹ️ Nenhuma mudança relevante desde o último release de main — hml continua mostrando a versão atual de main."
+          fi
+
+          rm -f .next-version
+
+  check-paths:
+    name: Verificar se algo que afeta o app mudou
+    runs-on: [self-hosted, tupsrvdocker01]
+    outputs:
+      app_changed: ${{ steps.filter.outputs.app }}
+    steps:
+      # Checkout explícito é OBRIGATÓRIO aqui — o runner é self-hosted e
+      # reaproveita o mesmo workspace entre execuções (diferente de um
+      # runner hospedado pelo GitHub, que sempre começa do zero). Sem isso,
+      # o dorny/paths-filter usa o checkout que sobrou de uma execução
+      # anterior (branch errada, refs desatualizadas) e o diff sai sem
+      # sentido — já vimos isso dar "0 arquivos mudados" mesmo com mudança
+      # real, silenciosamente pulando o deploy.
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Compara o push que disparou ESTA execução do workflow (base
+      # explícita = github.event.before, o estado antes deste push) —
+      # inclui o próprio commit "chore(release): ..." quando é ELE quem
+      # dispara (o push do @semantic-release/git é um push novo e
+      # independente, que aciona o workflow de novo do zero).
+      #
+      # Lista os arquivos reais do backend EXPLICITAMENTE, em vez de
+      # "backend/**" com exclusão via "!" — testado na prática e o
+      # dorny/paths-filter não aplicou a negação como um .gitignore
+      # (precedência sequencial); "backend/VERSION"/"RELEASE_DATE"/
+      # "COMMIT_HASH" continuavam batendo mesmo com "!" na frente, o que
+      # causava um segundo deploy desnecessário a cada release (esses
+      # arquivos são metadado do semantic-release, não código). Se um
+      # arquivo novo for adicionado em backend/, atualize esta lista.
+      # Reembolso: o backend é um pacote (backend/app/**) com migrations
+      # (backend/migrations/**) — as pastas entram inteiras; os metadados do
+      # semantic-release ficam na raiz de backend/, fora delas. Os testes
+      # (backend/tests/) e o requirements-dev.txt não entram na imagem.
+      - name: Detectar mudanças em backend/frontend/docker-compose.yml
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          base: ${{ github.event.before }}
+          filters: |
+            app:
+              - 'backend/Dockerfile'
+              - 'backend/.dockerignore'
+              - 'backend/requirements.txt'
+              - 'backend/alembic.ini'
+              - 'backend/app/**'
+              - 'backend/migrations/**'
+              - 'frontend/**'
+              - 'docker-compose.yml'
+
+  deploy:
+    name: Disparar redeploy no Dokploy (${{ github.ref_name }})
+    needs: [release, check-paths]
+    if: needs.check-paths.outputs.app_changed == 'true'
+    uses: ./.github/workflows/_dokploy-deploy.yml
+    with:
+      environment_name: ${{ github.ref_name }}
+    secrets: inherit

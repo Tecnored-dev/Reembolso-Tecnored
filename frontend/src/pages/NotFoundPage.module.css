@@ -1,0 +1,27 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  min-height: 50vh;
+  text-align: center;
+}
+
+.code {
+  font-size: 6rem;
+  font-weight: 700;
+  color: var(--color-border);
+  line-height: 1;
+}
+
+.message {
+  font-size: 1.1rem;
+  color: var(--color-text-muted);
+}
+
+.back {
+  margin-top: 0.5rem;
+  font-size: 0.95rem;
+  color: var(--color-primary);
+}
