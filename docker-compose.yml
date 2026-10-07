@@ -37,7 +37,6 @@ services:
       # S3 ou SharePoint quando a TI decidir.
       - STORAGE_BACKEND=${STORAGE_BACKEND:-local}
       - STORAGE_LOCAL_DIR=${STORAGE_LOCAL_DIR:-/data/arquivos}
-      - TAREFAS_AUTOMATICAS=${TAREFAS_AUTOMATICAS:-true}
     volumes:
       - reembolso_data:/data
     networks:
