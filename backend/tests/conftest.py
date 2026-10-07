@@ -27,18 +27,6 @@ def db():
     )
     Base.metadata.create_all(eng)
     session = sessionmaker(bind=eng, expire_on_commit=False)()
-    # Mesma carga inicial da migração 0002 (o teste cria as tabelas sem Alembic).
-    from app.models import CentroCusto, Empresa
-
-    session.add_all(
-        [
-            CentroCusto(codigo="3350", nome="T.I / T.A", ativo=True),
-            CentroCusto(codigo="4110", nome="CONTROLADORIA", ativo=True),
-            Empresa(nome="TECNORED", ativo=True),
-            Empresa(nome="TECNORED MARABA", ativo=True),
-        ]
-    )
-    session.commit()
     yield session
     session.close()
     eng.dispose()
@@ -54,7 +42,6 @@ def settings():
         grupo_admin="g-admin",
         dev_login_enabled=True,
         frontend_url="http://front",
-        tarefas_automaticas=False,
     )
 
 
@@ -66,10 +53,7 @@ def cliente(db, settings, tmp_path, monkeypatch):
     storage = ArmazenamentoLocal(str(tmp_path / "arquivos"))
     app.dependency_overrides[get_db] = lambda: db
     app.dependency_overrides[get_settings] = lambda: settings
-    app.dependency_overrides[get_armazenamento] = lambda: storage
     get_armazenamento.cache_clear()
     monkeypatch.setattr("app.api.routes.sistema.get_armazenamento", lambda: storage)
-    cliente = TestClient(app, follow_redirects=False)
-    cliente.storage = storage  # type: ignore[attr-defined]
-    yield cliente
+    yield TestClient(app, follow_redirects=False)
     app.dependency_overrides.clear()
