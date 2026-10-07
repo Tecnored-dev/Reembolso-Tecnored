@@ -69,3 +69,14 @@ export function lerValor(texto: string): number {
   if (bruto.includes(',')) bruto = bruto.replace(/\./g, '').replace(',', '.')
   return bruto === '' ? NaN : Number(bruto)
 }
+
+/**
+ * Destino interno seguro para o parâmetro `?voltar=`. Só aceita caminho do
+ * próprio site: começa com uma barra e não tem `//` nem `\` no início (o
+ * navegador trata `/\site` como `//site`, ou seja, outro domínio).
+ */
+export function caminhoInterno(pedido: string | null, padrao = '/inicio'): string {
+  if (!pedido || !pedido.startsWith('/')) return padrao
+  if (pedido.startsWith('//') || pedido.includes('\\')) return padrao
+  return pedido
+}

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  caminhoInterno,
   formatarData,
   formatarMoeda,
   formatVersion,
@@ -67,5 +68,17 @@ describe('lerValor', () => {
     expect(lerValor('1.234,56')).toBe(1234.56)
     expect(lerValor('R$ 10')).toBe(10)
     expect(lerValor('')).toBeNaN()
+  })
+})
+
+describe('caminhoInterno', () => {
+  it('aceita caminho do próprio site', () => {
+    expect(caminhoInterno('/nova')).toBe('/nova')
+    expect(caminhoInterno('/solicitacoes/3?x=1')).toBe('/solicitacoes/3?x=1')
+  })
+  it('recusa outro domínio e cai no padrão', () => {
+    for (const ruim of [null, '', 'nova', 'https://mal.com', '//mal.com', '/\\mal.com', '/\\/mal.com', '\\\\mal.com']) {
+      expect(caminhoInterno(ruim)).toBe('/inicio')
+    }
   })
 })

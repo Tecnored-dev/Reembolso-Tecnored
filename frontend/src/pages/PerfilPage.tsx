@@ -5,7 +5,7 @@ import { useApi } from '@/hooks/useApi'
 import { api } from '@/services/api'
 import ui from '@/styles/ui.module.css'
 import type { Cadastros } from '@/types'
-import { mensagemErro } from '@/utils'
+import { caminhoInterno, mensagemErro } from '@/utils'
 
 // Matrícula e centro de custo: informados uma vez (1º acesso) e copiados em
 // cada solicitação. O centro de custo é sempre o do próprio colaborador.
@@ -19,8 +19,7 @@ export default function PerfilPage() {
   const [salvo, setSalvo] = useState(false)
   const navigate = useNavigate()
   const [params] = useSearchParams()
-  const pedido = params.get('voltar') ?? ''
-  const voltar = pedido.startsWith('/') && !pedido.startsWith('//') ? pedido : '/inicio'
+  const voltar = caminhoInterno(params.get('voltar'))
   const primeiroAcesso = !perfil.completo
 
   async function salvar(e: FormEvent) {
