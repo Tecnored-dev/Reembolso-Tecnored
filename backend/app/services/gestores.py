@@ -1,12 +1,19 @@
 """Lista de gestores para o colaborador escolher.
 
-Orientação do Marcos (TI): listar do grupo de gestores do Azure, em vez de
-manter tabela própria. Isso usa o Microsoft Graph com token de APLICAÇÃO
-(permissão GroupMember.Read.All de aplicativo — em validação pela TI).
+Orientação do Marcos (TI): listar do grupo de gestores do Azure
+(`AZURE_GROUP_GESTOR`), em vez de manter cadastro próprio.
 
-Enquanto o Graph não responder (local, permissão pendente, fora do ar), cai
-para quem já entrou no sistema com o papel de gestor. A queda é registrada
-em log; a lista nunca fica vazia por erro de rede se houver gestor conhecido.
+A TI liberou a permissão `GroupMember.Read.All` do tipo DELEGADA (06/10/2026):
+ela só vale em nome de alguém logado. Por isso a lista é lida durante o LOGIN
+de qualquer pessoa (com o token dela) e guardada na tabela `gestores_grupo`.
+Quem entra ou sai do grupo aparece/some no próximo login de qualquer usuário.
+Nenhum token é guardado.
+
+Ordem de consulta em `listar`:
+1. a cópia do grupo salva no último login (`gestores_grupo`);
+2. se ainda não houver cópia: Graph com token de APLICATIVO (só funciona se a
+   TI um dia liberar a permissão do tipo Aplicativo);
+3. por último: quem já entrou no sistema com o papel de gestor.
 """
 
 from __future__ import annotations
@@ -17,12 +24,12 @@ from dataclasses import dataclass
 
 import httpx
 from msal import ConfidentialClientApplication
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.auth.papeis import GESTOR
 from app.config import Settings
-from app.models.cadastros import Usuario
+from app.models.cadastros import GestorGrupo, Usuario
 
 log = logging.getLogger(__name__)
 
@@ -36,7 +43,63 @@ class Gestor:
     nome: str
 
 
-def _do_graph(settings: Settings) -> list[Gestor]:
+def buscar_membros(token: str, grupo_id: str) -> list[Gestor]:
+    """Membros (usuários, inclusive de subgrupos) de um grupo no Graph."""
+    url: str | None = (
+        f"https://graph.microsoft.com/v1.0/groups/{grupo_id}"
+        "/transitiveMembers/microsoft.graph.user?$select=displayName,mail,userPrincipalName"
+        "&$top=999"
+    )
+    gestores: list[Gestor] = []
+    sem_email = 0
+    with httpx.Client(timeout=10.0) as client:
+        while url:
+            resp = client.get(url, headers={"Authorization": f"Bearer {token}"})
+            resp.raise_for_status()
+            dados = resp.json()
+            for membro in dados.get("value", []):
+                email = (membro.get("mail") or membro.get("userPrincipalName") or "").lower()
+                if email:
+                    gestores.append(Gestor(email, membro.get("displayName") or email))
+                else:
+                    sem_email += 1
+            url = dados.get("@odata.nextLink")
+    if sem_email and not gestores:
+        # O Graph devolve só o id quando falta permissão para ler o perfil dos
+        # usuários (User.ReadBasic.All). Não dá para usar: melhor falhar alto.
+        raise RuntimeError(
+            f"o grupo tem {sem_email} membro(s), mas o Graph não devolveu nome nem e-mail "
+            "(provável falta da permissão User.ReadBasic.All)"
+        )
+    if sem_email:
+        log.warning("Grupo de gestores: %s membro(s) sem e-mail foram ignorados.", sem_email)
+    return gestores
+
+
+def sincronizar_no_login(db: Session, settings: Settings, token_usuario: str, agora) -> bool:
+    """Atualiza a cópia do grupo de gestores usando o token de quem acabou de logar.
+
+    Nunca derruba o login: em erro, registra em log e mantém a cópia anterior.
+    Devolve True se atualizou.
+    """
+    if not settings.grupo_gestor:
+        return False
+    try:
+        membros = buscar_membros(token_usuario, settings.grupo_gestor)
+    except Exception as exc:  # permissão, rede, grupo errado...
+        log.warning("Não foi possível ler o grupo de gestores no login (%s).", exc)
+        return False
+    unicos = {g.email: g for g in membros}
+    log.warning("Grupo de gestores lido no login: %s membro(s).", len(unicos))
+    db.execute(delete(GestorGrupo))
+    db.add_all(
+        GestorGrupo(email=g.email, nome=g.nome, atualizado_em=agora) for g in unicos.values()
+    )
+    _cache.clear()
+    return True
+
+
+def _do_graph_aplicativo(settings: Settings) -> list[Gestor]:
     app = ConfidentialClientApplication(
         settings.azure_client_id,
         authority=f"https://login.microsoftonline.com/{settings.azure_tenant_id}",
@@ -45,45 +108,33 @@ def _do_graph(settings: Settings) -> list[Gestor]:
     token = app.acquire_token_for_client(scopes=["https://graph.microsoft.com/.default"])
     if "access_token" not in token:
         raise RuntimeError(token.get("error_description") or token.get("error") or "sem token")
-
-    url: str | None = (
-        f"https://graph.microsoft.com/v1.0/groups/{settings.grupo_gestor}"
-        "/transitiveMembers/microsoft.graph.user?$select=displayName,mail,userPrincipalName"
-        "&$top=999"
-    )
-    gestores: list[Gestor] = []
-    with httpx.Client(timeout=10.0) as client:
-        while url:
-            resp = client.get(url, headers={"Authorization": f"Bearer {token['access_token']}"})
-            resp.raise_for_status()
-            dados = resp.json()
-            for membro in dados.get("value", []):
-                email = (membro.get("mail") or membro.get("userPrincipalName") or "").lower()
-                if email:
-                    gestores.append(Gestor(email, membro.get("displayName") or email))
-            url = dados.get("@odata.nextLink")
-    return gestores
+    return buscar_membros(token["access_token"], settings.grupo_gestor)
 
 
-def _do_banco(db: Session) -> list[Gestor]:
+def _da_copia(db: Session) -> list[Gestor]:
+    return [Gestor(g.email, g.nome) for g in db.scalars(select(GestorGrupo)).all()]
+
+
+def _de_quem_ja_entrou(db: Session) -> list[Gestor]:
     usuarios = db.scalars(select(Usuario).where(Usuario.papeis.contains(GESTOR))).all()
     return [Gestor(u.email, u.nome) for u in usuarios if GESTOR in u.lista_papeis]
 
 
 def listar(db: Session, settings: Settings) -> list[Gestor]:
-    if settings.azure_configurado and settings.grupo_gestor:
+    gestores = _da_copia(db)
+    if not gestores and settings.azure_configurado and settings.grupo_gestor:
         guardado = _cache.get(settings.grupo_gestor)
         if guardado and time.monotonic() - guardado[0] < CACHE_SEGUNDOS:
             gestores = guardado[1]
         else:
             try:
-                gestores = _do_graph(settings)
+                gestores = _do_graph_aplicativo(settings)
                 _cache[settings.grupo_gestor] = (time.monotonic(), gestores)
-            except Exception as exc:  # rede, permissão, grupo errado...
-                log.warning("Graph indisponível para listar gestores (%s); usando o banco.", exc)
-                gestores = _do_banco(db)
-    else:
-        gestores = _do_banco(db)
+            except Exception as exc:
+                log.info("Graph (aplicativo) indisponível para gestores (%s); usando o banco.", exc)
+                _cache[settings.grupo_gestor] = (time.monotonic(), [])
+    if not gestores:
+        gestores = _de_quem_ja_entrou(db)
     unicos = {g.email: g for g in gestores}
     return sorted(unicos.values(), key=lambda g: g.nome.lower())
 

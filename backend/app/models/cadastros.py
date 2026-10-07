@@ -63,3 +63,18 @@ class Usuario(Base):
     @property
     def perfil_completo(self) -> bool:
         return bool(self.matricula and self.centro_custo_id)
+
+
+class GestorGrupo(Base):
+    """Cópia dos membros do grupo de gestores do Azure, atualizada a cada login.
+
+    Ver app/services/gestores.py: a permissão liberada pela TI é delegada, então
+    o grupo só pode ser lido em nome de quem está logando.
+    """
+
+    __tablename__ = "gestores_grupo"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    email: Mapped[str] = mapped_column(String(254), nullable=False, unique=True)
+    nome: Mapped[str] = mapped_column(String(200), nullable=False)
+    atualizado_em: Mapped[datetime] = mapped_column(DateTime, nullable=False)

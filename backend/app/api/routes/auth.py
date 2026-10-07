@@ -7,6 +7,8 @@ trocando a sessão em memória pela sessão persistida no banco.
 
 from __future__ import annotations
 
+import asyncio
+
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
@@ -18,6 +20,7 @@ from app.auth.deps import definir_cookie
 from app.auth.papeis import PAPEIS_ESPECIAIS, resolver_papeis
 from app.config import Settings, get_settings
 from app.db import get_db
+from app.services import gestores
 
 router = APIRouter(tags=["auth"])
 
@@ -67,6 +70,12 @@ async def auth_callback(
             timeout=10.0,
         )
     grupos = [g["id"] for g in resp.json().get("value", []) if g.get("id")]
+
+    # Aproveita o token de quem está logando para atualizar a lista de gestores
+    # (permissão delegada: só dá para ler o grupo em nome de alguém logado).
+    await asyncio.to_thread(
+        gestores.sincronizar_no_login, db, settings, result["access_token"], sessoes.agora_utc()
+    )
 
     claims = result.get("id_token_claims", {})
     email = claims.get("preferred_username", "")
