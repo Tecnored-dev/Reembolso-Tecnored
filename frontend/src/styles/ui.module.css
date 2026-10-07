@@ -1,0 +1,236 @@
+/* Peças visuais compartilhadas entre as telas (cartão, campos, botões, tabela). */
+
+.card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  padding: 20px 22px;
+  margin-bottom: 16px;
+}
+
+.cabecalho {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.titulo {
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+.subtitulo {
+  font-size: 1rem;
+  font-weight: 700;
+  margin-bottom: 12px;
+}
+
+.muted {
+  color: var(--color-text-muted);
+  font-size: 0.88rem;
+}
+
+/* ----- Formulário ------------------------------------------------------- */
+.form {
+  display: grid;
+  gap: 16px;
+}
+
+.grade {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+.campo {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.campo label {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.campo input,
+.campo select,
+.campo textarea {
+  font: inherit;
+  font-size: 0.95rem;
+  padding: 9px 11px;
+  border: 1px solid #cfd4dc;
+  border-radius: var(--radius-md);
+  background: white;
+  color: var(--color-text);
+}
+
+.campo input:focus,
+.campo select:focus,
+.campo textarea:focus {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -1px;
+  border-color: transparent;
+}
+
+.campo textarea {
+  min-height: 80px;
+  resize: vertical;
+}
+
+.ajuda {
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+}
+
+/* ----- Botões ------------------------------------------------------------ */
+.botoes {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.botao {
+  font: inherit;
+  font-size: 0.92rem;
+  font-weight: 600;
+  padding: 9px 18px;
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  cursor: pointer;
+  background: var(--color-primary);
+  color: white;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.botao:hover:not(:disabled) {
+  background: var(--color-primary-dk);
+  text-decoration: none;
+}
+
+.botao:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.secundario {
+  background: white;
+  color: var(--color-text);
+  border-color: #cfd4dc;
+}
+
+.secundario:hover:not(:disabled) {
+  background: var(--color-bg);
+}
+
+.perigo {
+  background: white;
+  color: var(--color-danger);
+  border-color: #f1b5ae;
+}
+
+.perigo:hover:not(:disabled) {
+  background: #fef2f2;
+}
+
+/* ----- Avisos ----------------------------------------------------------- */
+.erro,
+.aviso,
+.info {
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+  font-size: 0.88rem;
+}
+
+.erro {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.aviso {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.info {
+  background: #e0f2f1;
+  color: #1f5049;
+}
+
+/* ----- Tabela ----------------------------------------------------------- */
+.tabela {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.tabela th {
+  text-align: left;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--color-text-muted);
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.tabela td {
+  padding: 10px;
+  border-bottom: 1px solid var(--color-border);
+  vertical-align: middle;
+}
+
+.tabela tbody tr {
+  cursor: pointer;
+}
+
+.tabela tbody tr:hover {
+  background: var(--color-bg);
+}
+
+.direita {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.vazio {
+  text-align: center;
+  padding: 32px 12px;
+  color: var(--color-text-muted);
+}
+
+/* ----- Rótulo: valor ---------------------------------------------------- */
+.dados {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 14px 20px;
+}
+
+.dados dt {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--color-text-muted);
+}
+
+.dados dd {
+  font-size: 0.95rem;
+}
+
+.codigo {
+  white-space: nowrap;
+}
+
+/* Colunas que somem no celular para o status caber na tela. */
+@media (max-width: 640px) {
+  .opcional {
+    display: none;
+  }
+}

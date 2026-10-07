@@ -1,0 +1,107 @@
+.page {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.carregando {
+  padding: 48px;
+  text-align: center;
+  color: var(--color-text-muted);
+}
+
+.header {
+  color: white;
+  padding: 12px 24px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.marca {
+  font-size: 1.1rem;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+}
+
+.marca span {
+  font-weight: 400;
+  opacity: 0.8;
+}
+
+.usuario {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 0.85rem;
+}
+
+.nomeUsuario {
+  color: white;
+}
+
+.ambiente {
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.sair {
+  color: white;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  padding: 4px 12px;
+  border-radius: var(--radius-md);
+}
+
+.sair:hover {
+  background: rgba(255, 255, 255, 0.15);
+  text-decoration: none;
+}
+
+.menu {
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+  padding: 0 16px;
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+}
+
+.item {
+  padding: 12px 14px;
+  color: var(--color-text-muted);
+  font-size: 0.9rem;
+  font-weight: 600;
+  border-bottom: 3px solid transparent;
+  white-space: nowrap;
+}
+
+.item:hover {
+  color: var(--color-text);
+  text-decoration: none;
+}
+
+.ativo {
+  color: var(--color-primary-dk);
+  border-bottom-color: var(--color-primary);
+}
+
+.conteudo {
+  max-width: 960px;
+  width: 100%;
+  margin: 24px auto;
+  padding: 0 16px;
+  flex: 1;
+}
+
+.rodape {
+  text-align: center;
+  font-size: 0.72rem;
+  color: var(--color-text-muted);
+  padding: 18px;
+}

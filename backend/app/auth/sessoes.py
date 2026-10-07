@@ -11,6 +11,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.config import SESSION_DURATION_HOURS
+from app.models.cadastros import Usuario as CadastroUsuario
 from app.models.sessao import Sessao
 
 COOKIE = "session_token"
@@ -49,10 +50,12 @@ def criar_sessao(
     """Grava a sessão e devolve o token (vai só no cookie, nunca no banco)."""
     token = secrets.token_urlsafe(32)
     agora = agora_utc()
+    email = email.strip().lower()
+    _registrar_usuario(db, email=email, nome=nome, papeis=papeis, agora=agora)
     db.add(
         Sessao(
             token_hash=_hash(token),
-            email=email.strip().lower(),
+            email=email,
             nome=nome,
             grupos=",".join(grupos) or None,
             papeis=",".join(papeis),
@@ -65,6 +68,24 @@ def criar_sessao(
     db.execute(delete(Sessao).where(Sessao.expira_em < agora))
     db.commit()
     return token
+
+
+def _registrar_usuario(
+    db: Session, *, email: str, nome: str, papeis: list[str], agora: datetime
+) -> None:
+    """Cria/atualiza o cadastro do usuário a cada login.
+
+    Os papéis gravados aqui servem para achar quem é do financeiro (avisos) e,
+    sem Azure, para listar gestores no ambiente local.
+    """
+    cadastro = db.scalar(select(CadastroUsuario).where(CadastroUsuario.email == email))
+    if cadastro is None:
+        cadastro = CadastroUsuario(email=email, nome=nome, criado_em=agora)
+        db.add(cadastro)
+    cadastro.nome = nome
+    cadastro.papeis = ",".join(papeis)
+    cadastro.ultimo_login_em = agora
+    cadastro.atualizado_em = agora
 
 
 def obter_usuario(db: Session, token: str | None) -> Usuario | None:
