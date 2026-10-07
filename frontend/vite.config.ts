@@ -1,4 +1,4 @@
-/// <reference types="vitest" />
+/// <reference types="vitest/config" />
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { resolve } from 'path'
@@ -32,12 +32,16 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     sourcemap: false,
-    // Divide o bundle por módulo para melhor performance de cache
-    rollupOptions: {
+    // Divide o bundle por módulo para melhor performance de cache.
+    // Vite 8 usa Rolldown: `rollupOptions` virou `rolldownOptions` e o
+    // `manualChunks` em formato de objeto foi trocado por `codeSplitting.groups`.
+    rolldownOptions: {
       output: {
-        manualChunks: {
-          react: ['react', 'react-dom'],
-          router: ['react-router-dom'],
+        codeSplitting: {
+          groups: [
+            { name: 'react', test: /node_modules[\\/](react|react-dom|scheduler)[\\/]/ },
+            { name: 'router', test: /node_modules[\\/](react-router|react-router-dom|@remix-run)[\\/]/ },
+          ],
         },
       },
     },
