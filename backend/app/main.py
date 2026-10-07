@@ -11,6 +11,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from app import logs
 from app.api.routes import auth, cadastros, sistema, solicitacoes
 from app.config import get_settings
 from app.services.erros import NaoEncontrado, RegraNegocio, SemPermissao
@@ -54,6 +55,7 @@ async def _ciclo_de_vida(app: FastAPI) -> AsyncIterator[None]:
 def create_app() -> FastAPI:
     settings = get_settings()
     settings.validar()
+    logs.instalar()
 
     app = FastAPI(
         title="Reembolso-Tecnored — API",

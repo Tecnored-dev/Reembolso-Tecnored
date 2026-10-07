@@ -115,7 +115,8 @@ def test_login_microsoft_atualiza_a_lista(cliente, db, settings, monkeypatch):
         lambda token, grupo: tokens.append((token, grupo)) or [Gestor("nirlene@t.com", "Nirlene")],
     )
 
-    r = cliente.get("/auth/callback", params={"code": "abc"})
+    cliente.cookies.set("oauth_state", "st", path="/auth/callback")
+    r = cliente.get("/auth/callback", params={"code": "abc", "state": "st"})
     assert r.status_code == 302
     assert tokens == [("token-do-usuario", "g-gestor")]
     assert [g["email"] for g in cliente.get("/api/gestores").json()] == ["nirlene@t.com"]

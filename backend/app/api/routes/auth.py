@@ -8,9 +8,11 @@ trocando a sessão em memória pela sessão persistida no banco.
 from __future__ import annotations
 
 import asyncio
+import secrets
+from urllib.parse import quote
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from msal import ConfidentialClientApplication
 from sqlalchemy.orm import Session
@@ -26,6 +28,20 @@ router = APIRouter(tags=["auth"])
 
 SCOPES = ["GroupMember.Read.All"]  # openid/profile/email são geridos pelo MSAL
 
+# Proteção contra CSRF no login (parâmetro `state` do OAuth): o /login sorteia
+# um valor, guarda num cookie curto e manda para a Microsoft; o callback só
+# aceita a volta se o valor que a Microsoft devolveu for o mesmo do cookie.
+# Sem isso, alguém poderia fazer o navegador da vítima "logar" com o código
+# de outra conta.
+COOKIE_STATE = "oauth_state"
+STATE_VALIDADE_SEGUNDOS = 600
+
+
+def _erro_login(settings: Settings, motivo: str) -> RedirectResponse:
+    resposta = RedirectResponse(f"{settings.frontend_url}/?auth_error={quote(motivo[:60])}")
+    resposta.delete_cookie(COOKIE_STATE, path="/auth/callback")
+    return resposta
+
 
 def _msal(settings: Settings) -> ConfidentialClientApplication:
     return ConfidentialClientApplication(
@@ -39,29 +55,46 @@ def _msal(settings: Settings) -> ConfidentialClientApplication:
 def login(settings: Settings = Depends(get_settings)):
     if not settings.azure_configurado:
         return RedirectResponse(f"{settings.frontend_url}/?auth_error=azure_nao_configurado")
+    state = secrets.token_urlsafe(32)
     url = _msal(settings).get_authorization_request_url(
         scopes=SCOPES,
         redirect_uri=settings.azure_redirect_uri,
         prompt=settings.azure_login_prompt or None,
+        state=state,
     )
-    return RedirectResponse(url)
+    resposta = RedirectResponse(url)
+    resposta.set_cookie(
+        COOKIE_STATE,
+        state,
+        max_age=STATE_VALIDADE_SEGUNDOS,
+        httponly=True,
+        # Lax: o cookie volta na navegação de topo vinda da Microsoft (GET).
+        samesite="lax",
+        secure=settings.app_env != "local",
+        path="/auth/callback",
+    )
+    return resposta
 
 
 @router.get("/auth/callback")
 async def auth_callback(
     code: str | None = None,
     error: str | None = None,
+    state: str | None = None,
+    oauth_state: str | None = Cookie(default=None),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ):
     if error or not code or not settings.azure_configurado:
-        return RedirectResponse(f"{settings.frontend_url}/?auth_error={error or 'unknown'}")
+        return _erro_login(settings, error or "unknown")
+    if not (state and oauth_state and secrets.compare_digest(state, oauth_state)):
+        return _erro_login(settings, "state_invalido")
 
     result = _msal(settings).acquire_token_by_authorization_code(
         code=code, scopes=SCOPES, redirect_uri=settings.azure_redirect_uri
     )
     if "error" in result:
-        return RedirectResponse(f"{settings.frontend_url}/?auth_error={result.get('error')}")
+        return _erro_login(settings, str(result.get("error")))
 
     async with httpx.AsyncClient() as client:
         resp = await client.get(
@@ -90,6 +123,7 @@ async def auth_callback(
     )
     response = RedirectResponse(f"{settings.frontend_url}/inicio", status_code=302)
     definir_cookie(response, token, settings)
+    response.delete_cookie(COOKIE_STATE, path="/auth/callback")
     return response
 
 
