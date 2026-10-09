@@ -69,8 +69,14 @@ export default function DetalhePage() {
   useEffect(carregar, [carregar])
 
   // A nota vem da API com o cookie de sessão; vira um blob local para exibir.
-  const despesa = sol?.despesas[0]
+  // Alimentação tem uma nota e ela abre direto; em viagem, a pessoa escolhe qual ver.
+  const viagem = sol?.tipo === 'viagem'
+  const [notaAberta, setNotaAberta] = useState<number | null>(null)
+  const despesa = viagem
+    ? sol?.despesas.find((d) => d.id === notaAberta)
+    : sol?.despesas[0]
   useEffect(() => {
+    setAnexoUrl(null)
     if (!sol || !despesa) return
     let url: string | null = null
     api
@@ -119,7 +125,7 @@ export default function DetalhePage() {
               {sol.codigo} <StatusBadge status={sol.status} />
             </h1>
             <p className={ui.muted}>
-              Alimentação · enviada em {formatarDataHora(sol.enviado_em)} · {sol.status_rotulo}
+              {sol.tipo_rotulo} · enviada em {formatarDataHora(sol.enviado_em)} · {sol.status_rotulo}
             </p>
           </div>
           <div className={styles.valor}>{formatarMoeda(sol.valor_total, sol.moeda)}</div>
@@ -143,7 +149,10 @@ export default function DetalhePage() {
             <strong>Devolvida por {sol.devolvido_por}:</strong> {sol.motivo_devolucao}
             {sol.acoes.includes('reenviar') && (
               <div style={{ marginTop: 10 }}>
-                <Link to={`/solicitacoes/${sol.id}/corrigir`} className={ui.botao}>
+                <Link
+                  to={`/solicitacoes/${sol.id}/${viagem ? 'corrigir-viagem' : 'corrigir'}`}
+                  className={ui.botao}
+                >
                   Corrigir e reenviar
                 </Link>
               </div>
@@ -251,10 +260,25 @@ export default function DetalhePage() {
               <dt>Gestor</dt>
               <dd>{sol.pula_gestor ? 'Não se aplica (solicitante é gestor)' : sol.gestor_nome}</dd>
             </div>
-            <div>
-              <dt>Data da despesa</dt>
-              <dd>{formatarData(despesa?.data_despesa ?? null)}</dd>
-            </div>
+            {viagem ? (
+              <>
+                <div>
+                  <dt>Destino</dt>
+                  <dd>{sol.destino}</dd>
+                </div>
+                <div>
+                  <dt>Período</dt>
+                  <dd>
+                    {formatarData(sol.viagem_inicio)} a {formatarData(sol.viagem_fim)}
+                  </dd>
+                </div>
+              </>
+            ) : (
+              <div>
+                <dt>Data da despesa</dt>
+                <dd>{formatarData(sol.despesas[0]?.data_despesa ?? null)}</dd>
+              </div>
+            )}
             {sol.data_pagamento && (
               <div>
                 <dt>Pago em</dt>
@@ -262,7 +286,7 @@ export default function DetalhePage() {
               </div>
             )}
             <div style={{ gridColumn: '1 / -1' }}>
-              <dt>Descrição</dt>
+              <dt>{viagem ? 'Motivo da viagem' : 'Descrição'}</dt>
               <dd>{sol.descricao}</dd>
             </div>
           </dl>
@@ -270,7 +294,14 @@ export default function DetalhePage() {
 
         <section className={ui.card}>
           <h2 className={ui.subtitulo}>Nota</h2>
-          {!anexoUrl && <p className={ui.muted}>Carregando a nota…</p>}
+          {viagem && !despesa && <p className={ui.muted}>Escolha uma nota na lista abaixo.</p>}
+          {viagem && despesa && (
+            <p className={ui.muted} style={{ marginBottom: 8 }}>
+              {despesa.categoria_rotulo} · {formatarData(despesa.data_despesa)} ·{' '}
+              {formatarMoeda(despesa.valor, sol.moeda)}
+            </p>
+          )}
+          {despesa && !anexoUrl && <p className={ui.muted}>Carregando a nota…</p>}
           {anexoUrl && despesa?.arquivo_tipo.startsWith('image/') && (
             <a href={anexoUrl} target="_blank" rel="noreferrer">
               <img src={anexoUrl} alt={`Nota ${sol.codigo}`} className={styles.nota} />
@@ -283,6 +314,48 @@ export default function DetalhePage() {
           )}
         </section>
       </div>
+
+      {viagem && (
+        <section className={ui.card}>
+          <h2 className={ui.subtitulo}>Notas ({sol.despesas.length})</h2>
+          <div style={{ overflowX: 'auto' }}>
+            <table className={ui.tabela}>
+              <thead>
+                <tr>
+                  <th>Categoria</th>
+                  <th>Data</th>
+                  <th className={ui.opcional}>Descrição</th>
+                  <th className={ui.direita}>Valor</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {sol.despesas.map((d) => (
+                  <tr key={d.id} onClick={() => setNotaAberta(d.id)}>
+                    <td>{d.categoria_rotulo}</td>
+                    <td>{formatarData(d.data_despesa)}</td>
+                    <td className={ui.opcional}>{d.descricao ?? '—'}</td>
+                    <td className={ui.direita}>{formatarMoeda(d.valor, sol.moeda)}</td>
+                    <td className={ui.direita}>
+                      <button
+                        type="button"
+                        className={`${ui.botao} ${ui.secundario}`}
+                        aria-pressed={notaAberta === d.id}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setNotaAberta(d.id)
+                        }}
+                      >
+                        {notaAberta === d.id ? 'Aberta' : 'Ver nota'}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
 
       <section className={ui.card}>
         <h2 className={ui.subtitulo}>Histórico</h2>

@@ -9,7 +9,13 @@ from sqlalchemy.orm import Session
 
 from app.auth.deps import usuario_atual
 from app.auth.sessoes import Usuario, agora_utc
-from app.config import LIMITE_REFEICAO_DIA, Settings, get_settings
+from app.config import (
+    CATEGORIAS_VIAGEM,
+    LIMITE_REFEICAO_DIA,
+    LIMITE_SOLICITACAO,
+    Settings,
+    get_settings,
+)
 from app.db import get_db
 from app.models.cadastros import CentroCusto, Empresa
 from app.models.cadastros import Usuario as CadastroUsuario
@@ -89,6 +95,8 @@ def cadastros(usuario: Usuario = Depends(usuario_atual), db: Session = Depends(g
         "centros_custo": [{"id": c.id, "rotulo": c.rotulo} for c in centros],
         "empresas": [{"id": e.id, "nome": e.nome} for e in empresas],
         "limite_refeicao_dia": str(LIMITE_REFEICAO_DIA),
+        "limite_solicitacao": str(LIMITE_SOLICITACAO),
+        "categorias_viagem": [{"id": k, "rotulo": v} for k, v in CATEGORIAS_VIAGEM.items()],
     }
 
 

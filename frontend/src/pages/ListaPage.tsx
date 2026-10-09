@@ -31,9 +31,14 @@ export default function ListaPage({ escopo, titulo, descricao, vazio }: Props) {
           <p className={ui.muted}>{descricao}</p>
         </div>
         {escopo === 'minhas' && (
-          <Link to="/nova" className={ui.botao}>
-            + Novo reembolso de alimentação
-          </Link>
+          <div className={ui.botoes}>
+            <Link to="/nova" className={ui.botao}>
+              + Reembolso de alimentação
+            </Link>
+            <Link to="/nova/viagem" className={ui.botao}>
+              + Reembolso de viagem
+            </Link>
+          </div>
         )}
       </div>
 
@@ -49,6 +54,7 @@ export default function ListaPage({ escopo, titulo, descricao, vazio }: Props) {
               <tr>
                 <th>Código</th>
                 {mostrarSolicitante && <th>Solicitante</th>}
+                <th>Tipo</th>
                 <th className={ui.opcional}>Descrição</th>
                 <th className={ui.direita}>Valor</th>
                 <th>Status</th>
@@ -64,8 +70,9 @@ export default function ListaPage({ escopo, titulo, descricao, vazio }: Props) {
                     </Link>
                   </td>
                   {mostrarSolicitante && <td>{s.solicitante_nome}</td>}
+                  <td>{s.tipo_rotulo}</td>
                   <td className={ui.opcional}>
-                    {s.descricao}
+                    {s.destino ? `${s.destino} · ${s.descricao}` : s.descricao}
                     {s.alerta_limite && (
                       <span title={s.alerta_limite} aria-label="Acima do limite">
                         {' '}

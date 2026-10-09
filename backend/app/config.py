@@ -24,6 +24,19 @@ LIMITE_REFEICAO_DIA = Decimal("135.00")  # política: só ALERTA, não bloqueia
 DIAS_LEMBRETE_DEVOLVIDO = 5  # lembrete ao colaborador com solicitação devolvida parada
 DIAS_EXPIRACAO_DEVOLVIDO = 7  # depois disso, cancela
 ARQUIVO_TAMANHO_MAX = 10 * 1024 * 1024  # 10 MB por nota
+LIMITE_SOLICITACAO = Decimal("5000.00")  # total por solicitação: só ALERTA, não bloqueia
+MAX_DESPESAS_VIAGEM = 30  # notas por reembolso de viagem
+
+# Categorias das despesas de viagem (chave gravada no banco → rótulo na tela).
+# Os limites de hospedagem, translado e lavanderia ainda NÃO geram alerta: falta
+# a Thais confirmar a unidade de cada um (por diária? por viagem? por semana?).
+CATEGORIAS_VIAGEM = {
+    "refeicao": "Refeição",
+    "hospedagem": "Hospedagem",
+    "transporte": "Transporte / translado",
+    "lavanderia": "Lavanderia, internet e telefone",
+    "outros": "Outros",
+}
 
 AMBIENTES = ("local", "hml", "main")
 
