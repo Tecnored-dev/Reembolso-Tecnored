@@ -3,6 +3,23 @@
   font-weight: 700;
 }
 
+.valorRotulo {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+
+.link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--color-primary-dk);
+  text-decoration: underline;
+  cursor: pointer;
+  font: inherit;
+}
+
 .etapas {
   list-style: none;
   display: flex;
@@ -12,6 +29,10 @@
 
 .etapas li {
   flex: 1;
+  /* o adiantamento tem 7 etapas: no celular elas encolhem e quebram a linha */
+  min-width: 0;
+  overflow-wrap: anywhere;
+  hyphens: auto;
   text-align: center;
   font-size: 0.78rem;
   font-weight: 600;
@@ -47,6 +68,10 @@
 @media (max-width: 720px) {
   .colunas {
     grid-template-columns: 1fr;
+  }
+
+  .etapas li {
+    font-size: 0.68rem;
   }
 }
 

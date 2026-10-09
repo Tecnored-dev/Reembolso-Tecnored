@@ -38,6 +38,9 @@ export default function ListaPage({ escopo, titulo, descricao, vazio }: Props) {
             <Link to="/nova/viagem" className={ui.botao}>
               + Reembolso de viagem
             </Link>
+            <Link to="/nova/adiantamento" className={ui.botao}>
+              + Adiantamento de viagem
+            </Link>
           </div>
         )}
       </div>

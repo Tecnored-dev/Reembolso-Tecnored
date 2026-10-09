@@ -1,10 +1,12 @@
 import { Route, Routes } from 'react-router-dom'
 import Layout from '@/components/Layout'
+import AdiantamentoFormPage from '@/pages/AdiantamentoFormPage'
 import AlimentacaoFormPage from '@/pages/AlimentacaoFormPage'
 import DetalhePage from '@/pages/DetalhePage'
 import ListaPage from '@/pages/ListaPage'
 import NotFoundPage from '@/pages/NotFoundPage'
 import PerfilPage from '@/pages/PerfilPage'
+import PrestacaoPage from '@/pages/PrestacaoPage'
 import ViagemFormPage from '@/pages/ViagemFormPage'
 import WelcomePage from '@/pages/WelcomePage'
 
@@ -32,7 +34,7 @@ function App() {
               key="conferencia"
               escopo="conferencia"
               titulo="Conferência"
-              descricao="Pedidos aguardando a conferência do financeiro (dados e nota)."
+              descricao="Pedidos, prestações de contas e devoluções aguardando a conferência do financeiro."
               vazio="Nada para conferir agora."
             />
           }
@@ -44,7 +46,7 @@ function App() {
               key="aprovacao"
               escopo="aprovacao"
               titulo="Aprovações"
-              descricao="Pedidos já conferidos pelo financeiro, aguardando a sua aprovação."
+              descricao="Reembolsos já conferidos pelo financeiro, adiantamentos e diferenças aguardando a sua aprovação."
               vazio="Nenhum pedido aguardando a sua aprovação."
             />
           }
@@ -56,7 +58,7 @@ function App() {
               key="pagamento"
               escopo="pagamento"
               titulo="Pagamentos"
-              descricao="Pedidos aprovados, aguardando pagamento."
+              descricao="Reembolsos, adiantamentos e diferenças aprovados, aguardando pagamento."
               vazio="Nenhum pagamento pendente."
             />
           }
@@ -75,9 +77,12 @@ function App() {
         />
         <Route path="/nova" element={<AlimentacaoFormPage />} />
         <Route path="/nova/viagem" element={<ViagemFormPage />} />
+        <Route path="/nova/adiantamento" element={<AdiantamentoFormPage />} />
         <Route path="/solicitacoes/:id" element={<DetalhePage />} />
         <Route path="/solicitacoes/:id/corrigir" element={<AlimentacaoFormPage />} />
         <Route path="/solicitacoes/:id/corrigir-viagem" element={<ViagemFormPage />} />
+        <Route path="/solicitacoes/:id/corrigir-adiantamento" element={<AdiantamentoFormPage />} />
+        <Route path="/solicitacoes/:id/prestar-contas" element={<PrestacaoPage />} />
         <Route path="/perfil" element={<PerfilPage />} />
       </Route>
       <Route path="*" element={<NotFoundPage />} />

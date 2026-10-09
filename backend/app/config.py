@@ -21,22 +21,59 @@ SESSION_DURATION_HOURS = 8
 
 # Regras de negócio (decididas com a Thais — ver docs do projeto)
 LIMITE_REFEICAO_DIA = Decimal("135.00")  # política: só ALERTA, não bloqueia
-DIAS_LEMBRETE_DEVOLVIDO = 5  # lembrete ao colaborador com solicitação devolvida parada
-DIAS_EXPIRACAO_DEVOLVIDO = 7  # depois disso, cancela
+# Devolvida e parada: a Thais pediu "uns 15 dias" (09/10). O lembrete continua
+# 2 dias antes do cancelamento, como era no prazo antigo (5º de 7 dias).
+DIAS_LEMBRETE_DEVOLVIDO = 13  # lembrete ao colaborador com solicitação devolvida parada
+DIAS_EXPIRACAO_DEVOLVIDO = 15  # depois disso, cancela
 ARQUIVO_TAMANHO_MAX = 10 * 1024 * 1024  # 10 MB por nota
 LIMITE_SOLICITACAO = Decimal("5000.00")  # total por solicitação: só ALERTA, não bloqueia
-MAX_DESPESAS_VIAGEM = 30  # notas por reembolso de viagem
+MAX_DESPESAS_VIAGEM = 30  # notas por reembolso de viagem (e por prestação de contas)
 
-# Categorias das despesas de viagem (chave gravada no banco → rótulo na tela).
-# Os limites de hospedagem, translado e lavanderia ainda NÃO geram alerta: falta
-# a Thais confirmar a unidade de cada um (por diária? por viagem? por semana?).
+# Adiantamento de diárias (regras de 06/10/2026: diárias = R$ 135 vezes o número de dias).
+# Respostas da Thais (09/10): diária extra (mais de 5 dias) tem o mesmo valor;
+# viagem internacional não tem diária (só reembolso); a prestação de contas
+# deve vir em até 60 dias. Diária complementar: só para quem trabalha 100%
+# presencial e recebe auxílio refeição, com valor livre (sem valor fixo).
+# CONFIRMAR COM A THAIS — ainda são suposições fáceis de trocar aqui:
+#  - contagem de dias: corridos, contando o dia da ida e o da volta
+#    (segunda a quarta = 3 diárias; ela disse "conta o dia útil" e falta
+#    confirmar se sábado e domingo entram);
+#  - a diária complementar substitui as diárias normais (no formulário antigo
+#    era uma opção da mesma lista) e o valor informado é o total do pedido;
+#  - lembrete da prestação 7 dias antes do prazo e aviso quando vencer
+#    (sem bloquear nem cancelar: o dinheiro já foi pago).
+VALOR_DIARIA = Decimal("135.00")
+MAX_DIARIAS = 60  # trava contra datas digitadas erradas (ex.: ano trocado)
+PRAZO_PRESTACAO_DIAS = 60  # depois da volta da viagem
+DIAS_LEMBRETE_PRESTACAO = 7  # antes do fim do prazo
+
+# Tipos de despesa de viagem (reembolso de viagem e prestação de contas do
+# adiantamento), conforme a lista da Thais (09/10). Chave gravada no banco →
+# rótulo na tela. "refeicao" é a refeição nacional: só ela soma para o alerta
+# do limite diário. Limites de hospedagem, translado e lavanderia ainda NÃO
+# geram alerta: falta confirmar a unidade (por diária? por viagem? por semana?).
 CATEGORIAS_VIAGEM = {
-    "refeicao": "Refeição",
+    "refeicao": "Refeição - Nacional",
+    "refeicao_internacional": "Refeição - Internacional",
+    "almoco_pinda": "Almoço em Pinda - Fora da planta",
     "hospedagem": "Hospedagem",
-    "transporte": "Transporte / translado",
-    "lavanderia": "Lavanderia, internet e telefone",
-    "outros": "Outros",
+    "passagem_aerea": "Passagem aérea",
+    "translado_onibus": "Translado - Ônibus",
+    "taxi_uber": "Taxi ou Uber",
+    "combustivel": "Combustível",
+    "quilometragem": "Quilometragem com veículo próprio",
+    "estacionamento_pedagio": "Estacionamento e pedágios",
+    "lavanderia": "Lavanderia",
+    "internet_internacional": "Internet móvel internacional",
+    "correios_cartorios": "Correios e cartórios",
+    "cursos_treinamentos": "Cursos, Treinamentos e Workshops",
+    "compras_autorizadas": "Compras com autorização de custos",
+    "despesas_diversas": "Despesas diversas",
 }
+# Tipo em que a descrição é obrigatória (sem ela, não dá para saber o que foi).
+CATEGORIA_DESCRICAO_OBRIGATORIA = "despesas_diversas"
+# Nomes da primeira versão (só em bancos de teste locais): mostrados, nunca aceitos.
+CATEGORIAS_ANTIGAS = {"transporte": "Transporte / translado", "outros": "Outros"}
 
 AMBIENTES = ("local", "hml", "main")
 

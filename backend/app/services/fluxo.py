@@ -1,8 +1,8 @@
-"""Fluxo das solicitações de reembolso: ALIMENTAÇÃO e VIAGEM.
+"""Fluxo das solicitações: ALIMENTAÇÃO, VIAGEM e ADIANTAMENTO DE VIAGEM.
 
 O reembolso de viagem (o colaborador pagou e pede depois, com as notas) segue
 o MESMO fluxo da alimentação; a diferença é aceitar várias notas, cada uma com
-categoria. O adiantamento de diárias tem fluxo próprio e ainda não está aqui.
+categoria. O adiantamento de diárias tem fluxo próprio (fim deste texto).
 
 Regras (Thais, 06/10/2026 — docs do projeto `fluxos-aprovacao.md`):
 
@@ -15,9 +15,33 @@ Regras (Thais, 06/10/2026 — docs do projeto `fluxos-aprovacao.md`):
     AGUARDANDO_PAGAMENTO ─(financeiro paga e informa a data)─▶ PAGO
 
 - Depois de enviar, o colaborador não edita nem cancela; só corrige quando devolvido.
-- Devolvida e parada: lembrete no 5º dia, cancelada no 7º.
+- Devolvida e parada: lembrete 2 dias antes e cancelada depois de
+  DIAS_EXPIRACAO_DEVOLVIDO dias (15, pedido da Thais em 09/10).
+- Quem é do financeiro não confere o próprio pedido: outra pessoa do
+  financeiro confere (Thais, 09/10).
 - Alertas (não bloqueiam): refeição acima do limite diário (somando as notas
   do mesmo dia) e total acima do limite por solicitação.
+
+Adiantamento (diárias = R$ 135 vezes os dias; regras de 06/10/2026):
+
+    (diárias normais = R$ 135 por dia; ou diária complementar, com valor informado,
+     para quem recebe auxílio refeição)
+    colaborador pede ─▶ AGUARDANDO_GESTOR ─(aprova)─▶ AGUARDANDO_PAGAMENTO
+        (pulado se o solicitante é gestor)    (Thais paga SEM conferir: não há nota)
+        │ devolve ─▶ DEVOLVIDO ─(corrige)─▶ AGUARDANDO_GESTOR
+    pago ─▶ AGUARDANDO_PRESTACAO ─(colaborador manda as notas)─▶ PRESTACAO_EM_CONFERENCIA
+        │ Thais devolve ─▶ PRESTACAO_DEVOLVIDA ─(corrige)─▶ PRESTACAO_EM_CONFERENCIA
+        ▼ Thais confere (o resumo vai para a Thais e o gestor)
+        ├─ sobrou ─▶ AGUARDANDO_DEVOLUCAO ─(comprovante da transferência)─▶
+        │            DEVOLUCAO_EM_CONFERENCIA ─(Thais confirma)─▶ ENCERRADO
+        │            (se recusar o comprovante, volta para AGUARDANDO_DEVOLUCAO)
+        ├─ bateu ──▶ ENCERRADO
+        └─ faltou ─▶ DIFERENCA_AGUARDANDO_GESTOR ─(aprova)─▶ DIFERENCA_AGUARDANDO_PAGAMENTO
+                     (pulado se gestor)  │ devolve ─▶ PRESTACAO_DEVOLVIDA
+                                         ─(Thais paga a diferença)─▶ ENCERRADO
+
+Prestação de contas: prazo de PRAZO_PRESTACAO_DIAS (60) depois da volta, com
+lembrete antes e aviso quando vence (não bloqueia: o dinheiro já foi pago).
 """
 
 from __future__ import annotations
@@ -33,12 +57,17 @@ from sqlalchemy.orm import Session
 from app.auth.papeis import ADMIN, FINANCEIRO, GESTOR
 from app.auth.sessoes import Usuario, agora_utc
 from app.config import (
+    CATEGORIA_DESCRICAO_OBRIGATORIA,
     CATEGORIAS_VIAGEM,
     DIAS_EXPIRACAO_DEVOLVIDO,
     DIAS_LEMBRETE_DEVOLVIDO,
+    DIAS_LEMBRETE_PRESTACAO,
     LIMITE_REFEICAO_DIA,
     LIMITE_SOLICITACAO,
     MAX_DESPESAS_VIAGEM,
+    MAX_DIARIAS,
+    PRAZO_PRESTACAO_DIAS,
+    VALOR_DIARIA,
     Settings,
 )
 from app.models.cadastros import Empresa
@@ -53,7 +82,14 @@ log = logging.getLogger(__name__)
 
 TIPO_ALIMENTACAO = "alimentacao"
 TIPO_VIAGEM = "viagem"
-ROTULO_TIPO = {TIPO_ALIMENTACAO: "Alimentação", TIPO_VIAGEM: "Viagem"}
+TIPO_ADIANTAMENTO = "adiantamento"
+ROTULO_TIPO = {
+    TIPO_ALIMENTACAO: "Alimentação",
+    TIPO_VIAGEM: "Viagem",
+    TIPO_ADIANTAMENTO: "Adiantamento de viagem",
+}
+# Despesa especial do adiantamento: o comprovante da transferência da sobra.
+COMPROVANTE_DEVOLUCAO = "comprovante_devolucao"
 
 EM_CONFERENCIA = "em_conferencia"
 AGUARDANDO_GESTOR = "aguardando_gestor"
@@ -61,6 +97,15 @@ AGUARDANDO_PAGAMENTO = "aguardando_pagamento"
 PAGO = "pago"
 DEVOLVIDO = "devolvido"
 CANCELADO = "cancelado"
+# Só do adiantamento (depois do pagamento das diárias)
+AGUARDANDO_PRESTACAO = "aguardando_prestacao"
+PRESTACAO_EM_CONFERENCIA = "prestacao_em_conferencia"
+PRESTACAO_DEVOLVIDA = "prestacao_devolvida"
+AGUARDANDO_DEVOLUCAO = "aguardando_devolucao"
+DEVOLUCAO_EM_CONFERENCIA = "devolucao_em_conferencia"
+DIFERENCA_AGUARDANDO_GESTOR = "diferenca_aguardando_gestor"
+DIFERENCA_AGUARDANDO_PAGAMENTO = "diferenca_aguardando_pagamento"
+ENCERRADO = "encerrado"
 
 ROTULO_STATUS = {
     EM_CONFERENCIA: "Em conferência (financeiro)",
@@ -69,7 +114,22 @@ ROTULO_STATUS = {
     PAGO: "Paga",
     DEVOLVIDO: "Devolvida para correção",
     CANCELADO: "Cancelada",
+    AGUARDANDO_PRESTACAO: "Paga — aguardando prestação de contas",
+    PRESTACAO_EM_CONFERENCIA: "Prestação de contas em conferência (financeiro)",
+    PRESTACAO_DEVOLVIDA: "Prestação de contas devolvida para correção",
+    AGUARDANDO_DEVOLUCAO: "Aguardando devolução da sobra",
+    DEVOLUCAO_EM_CONFERENCIA: "Devolução enviada — aguardando confirmação",
+    DIFERENCA_AGUARDANDO_GESTOR: "Diferença aguardando aprovação do gestor",
+    DIFERENCA_AGUARDANDO_PAGAMENTO: "Diferença aprovada — aguardando pagamento",
+    ENCERRADO: "Encerrada",
 }
+
+# Em que fila de trabalho cada status aparece.
+FILA_CONFERENCIA = (EM_CONFERENCIA, PRESTACAO_EM_CONFERENCIA, DEVOLUCAO_EM_CONFERENCIA)
+FILA_GESTOR = (AGUARDANDO_GESTOR, DIFERENCA_AGUARDANDO_GESTOR)
+FILA_PAGAMENTO = (AGUARDANDO_PAGAMENTO, DIFERENCA_AGUARDANDO_PAGAMENTO)
+
+OUTRO_FINANCEIRO = "Outra pessoa do financeiro precisa conferir o seu próprio pedido."
 
 SISTEMA = Usuario(email="sistema", nome="Sistema", papeis=(), via="sistema")
 
@@ -98,6 +158,19 @@ class ItemViagem:
     descricao: str
     arquivo: int | None = None
     id: int | None = None
+
+
+@dataclass(frozen=True)
+class DadosAdiantamento:
+    destino: str
+    inicio: date
+    fim: date
+    descricao: str  # justificativa
+    empresa_id: int
+    gestor_email: str | None
+    # Diária complementar (quem recebe auxílio refeição): valor total informado
+    # pelo colaborador, no lugar das diárias normais. None = diárias normais.
+    complementar: Decimal | None = None
 
 
 @dataclass(frozen=True)
@@ -139,16 +212,16 @@ def listar(db: Session, usuario: Usuario, escopo: str) -> list[Solicitacao]:
         consulta = consulta.where(Solicitacao.solicitante_email == usuario.email)
     elif escopo == "conferencia":
         _exigir(usuario.tem(FINANCEIRO), "Só o financeiro confere.")
-        consulta = consulta.where(Solicitacao.status == EM_CONFERENCIA)
+        consulta = consulta.where(Solicitacao.status.in_(FILA_CONFERENCIA))
     elif escopo == "aprovacao":
         _exigir(usuario.tem(GESTOR), "Só gestores aprovam.")
         consulta = consulta.where(
-            Solicitacao.status == AGUARDANDO_GESTOR,
+            Solicitacao.status.in_(FILA_GESTOR),
             Solicitacao.gestor_email == usuario.email,
         )
     elif escopo == "pagamento":
         _exigir(usuario.tem(FINANCEIRO), "Só o financeiro paga.")
-        consulta = consulta.where(Solicitacao.status == AGUARDANDO_PAGAMENTO)
+        consulta = consulta.where(Solicitacao.status.in_(FILA_PAGAMENTO))
     elif escopo == "todas":
         if not (usuario.tem(FINANCEIRO) or usuario.tem(ADMIN)):
             # Gestor vê as que passaram por ele; colaborador, as próprias.
@@ -165,19 +238,44 @@ def listar(db: Session, usuario: Usuario, escopo: str) -> list[Solicitacao]:
 
 def acoes_disponiveis(sol: Solicitacao, usuario: Usuario) -> list[str]:
     acoes = []
-    if sol.status == EM_CONFERENCIA and usuario.tem(FINANCEIRO):
+    dono = sol.solicitante_email == usuario.email
+    financeiro = usuario.tem(FINANCEIRO)
+    # Quem é do financeiro não confere o próprio pedido (outra pessoa confere).
+    confere = financeiro and not dono
+    if sol.status in (EM_CONFERENCIA, PRESTACAO_EM_CONFERENCIA) and confere:
         acoes += ["conferir", "devolver"]
-    if (
-        sol.status == AGUARDANDO_GESTOR
-        and usuario.tem(GESTOR)
-        and sol.gestor_email == usuario.email
-    ):
+    if sol.status in FILA_GESTOR and usuario.tem(GESTOR) and sol.gestor_email == usuario.email:
         acoes += ["aprovar", "devolver"]
-    if sol.status == AGUARDANDO_PAGAMENTO and usuario.tem(FINANCEIRO):
+    if sol.status in FILA_PAGAMENTO and financeiro:
         acoes.append("pagar")
-    if sol.status == DEVOLVIDO and sol.solicitante_email == usuario.email:
+    if sol.status == DEVOLVIDO and dono:
         acoes.append("reenviar")
+    if sol.status in (AGUARDANDO_PRESTACAO, PRESTACAO_DEVOLVIDA) and dono:
+        acoes.append("prestar_contas")
+    if sol.status == AGUARDANDO_DEVOLUCAO and dono:
+        acoes.append("enviar_comprovante")
+    if sol.status == DEVOLUCAO_EM_CONFERENCIA and confere:
+        acoes += ["confirmar_devolucao", "recusar_comprovante"]
     return acoes
+
+
+def saldo(sol: Solicitacao) -> Decimal | None:
+    """Adiantamento: positivo = sobrou (devolver); negativo = falta (reembolsar)."""
+    if sol.tipo != TIPO_ADIANTAMENTO or sol.valor_gasto is None:
+        return None
+    return sol.valor_total - sol.valor_gasto
+
+
+def prazo_prestacao(sol: Solicitacao) -> date | None:
+    """Data limite da prestação de contas do adiantamento (60 dias após a volta)."""
+    if sol.tipo != TIPO_ADIANTAMENTO or sol.viagem_fim is None:
+        return None
+    return sol.viagem_fim + timedelta(days=PRAZO_PRESTACAO_DIAS)
+
+
+def calcular_diarias(inicio: date, fim: date) -> int:
+    """Dias corridos contando ida e volta (SUPOSIÇÃO — confirmar com a Thais)."""
+    return (fim - inicio).days + 1
 
 
 # ---------------------------------------------------------------------------
@@ -405,30 +503,16 @@ def reenviar_viagem(
     novas_chaves: list[str] = []
     chaves_antigas: list[str] = []
     try:
-        mantidas = {item.id for item in dados.itens if item.id is not None}
-        for despesa_id, despesa in atuais.items():
-            if despesa_id not in mantidas:
-                chaves_antigas.append(despesa.arquivo_chave)
-                sol.despesas.remove(despesa)
-        for item in dados.itens:
-            arquivo = arquivos_enviados[item.arquivo] if item.arquivo is not None else None
-            chave = None
-            if arquivo is not None:
-                chave = arquivos.salvar(armazenamento, arquivo, sol.codigo or "", agora)
-                novas_chaves.append(chave)
-            if item.id is None:
-                assert arquivo is not None and chave is not None  # garantido na validação
-                sol.despesas.append(_despesa_viagem(item, arquivo, chave, agora))
-                continue
-            despesa = atuais[item.id]
-            despesa.categoria, despesa.data_despesa = item.categoria, item.data_despesa
-            despesa.valor, despesa.descricao = item.valor, item.descricao.strip() or None
-            if arquivo is not None and chave is not None:
-                chaves_antigas.append(despesa.arquivo_chave)
-                despesa.arquivo_chave = chave
-                despesa.arquivo_nome, despesa.arquivo_tipo = arquivo.nome, arquivo.tipo
-                despesa.arquivo_tamanho = len(arquivo.conteudo)
-
+        _sincronizar_notas(
+            sol,
+            atuais,
+            dados.itens,
+            arquivos_enviados,
+            armazenamento,
+            agora,
+            novas_chaves,
+            chaves_antigas,
+        )
         sol.motivo_devolucao = None
         sol.devolvido_por = sol.devolvido_em = sol.lembrete_expiracao_em = None
         _mudar(db, sol, EM_CONFERENCIA, "reenviado", usuario, None, agora)
@@ -451,10 +535,48 @@ def reenviar_viagem(
     return sol
 
 
+def _sincronizar_notas(
+    sol: Solicitacao,
+    atuais: dict[int, Despesa],
+    itens: tuple[ItemViagem, ...],
+    arquivos_enviados: list[arquivos.ArquivoValidado],
+    armazenamento: Armazenamento,
+    agora: datetime,
+    novas_chaves: list[str],
+    chaves_antigas: list[str],
+) -> None:
+    """A lista enviada substitui `atuais`: com `id` mantém (e atualiza), sem `id`
+    é nota nova, e as que não vierem saem. Anota as chaves de arquivo gravadas
+    (para apagar se der erro) e as que deixaram de ser usadas (para apagar
+    depois do commit)."""
+    mantidas = {item.id for item in itens if item.id is not None}
+    for despesa_id, despesa in atuais.items():
+        if despesa_id not in mantidas:
+            chaves_antigas.append(despesa.arquivo_chave)
+            sol.despesas.remove(despesa)
+    for item in itens:
+        arquivo = arquivos_enviados[item.arquivo] if item.arquivo is not None else None
+        chave = None
+        if arquivo is not None:
+            chave = arquivos.salvar(armazenamento, arquivo, sol.codigo or "", agora)
+            novas_chaves.append(chave)
+        if item.id is None:
+            assert arquivo is not None and chave is not None  # garantido na validação
+            sol.despesas.append(_despesa_viagem(item, arquivo, chave, agora))
+            continue
+        despesa = atuais[item.id]
+        despesa.categoria, despesa.data_despesa = item.categoria, item.data_despesa
+        despesa.valor, despesa.descricao = item.valor, item.descricao.strip() or None
+        if arquivo is not None and chave is not None:
+            chaves_antigas.append(despesa.arquivo_chave)
+            despesa.arquivo_chave = chave
+            despesa.arquivo_nome, despesa.arquivo_tipo = arquivo.nome, arquivo.tipo
+            despesa.arquivo_tamanho = len(arquivo.conteudo)
+
+
 def _validar_viagem(
     dados: DadosViagem, arquivos_enviados: list[arquivos.ArquivoValidado], existentes: set[int]
 ) -> None:
-    hoje = date.today()
     if not dados.destino.strip():
         raise RegraNegocio("Informe o destino da viagem.")
     if len(dados.destino) > 200:
@@ -465,22 +587,33 @@ def _validar_viagem(
         raise RegraNegocio("Explique o motivo da viagem.")
     if len(dados.descricao) > 500:
         raise RegraNegocio("Justificativa muito longa (máximo 500 caracteres).")
-    if not dados.itens:
+    _validar_itens(dados.itens, arquivos_enviados, existentes)
+
+
+def _validar_itens(
+    itens: tuple[ItemViagem, ...],
+    arquivos_enviados: list[arquivos.ArquivoValidado],
+    existentes: set[int],
+) -> None:
+    """Notas de viagem (reembolso ou prestação de contas do adiantamento)."""
+    hoje = date.today()
+    if not itens:
         raise RegraNegocio("Inclua pelo menos uma nota.")
-    if len(dados.itens) > MAX_DESPESAS_VIAGEM:
+    if len(itens) > MAX_DESPESAS_VIAGEM:
         raise RegraNegocio(f"Máximo de {MAX_DESPESAS_VIAGEM} notas por solicitação.")
 
     usados: set[int] = set()
     ids: set[int] = set()
-    for n, item in enumerate(dados.itens, start=1):
+    for n, item in enumerate(itens, start=1):
         if item.categoria not in CATEGORIAS_VIAGEM:
             raise RegraNegocio(f"Nota {n}: categoria inválida.")
         if item.data_despesa > hoje:
             raise RegraNegocio(f"Nota {n}: a data não pode ser no futuro.")
         if len(item.descricao) > 200:
             raise RegraNegocio(f"Nota {n}: descrição muito longa (máximo 200 caracteres).")
-        if item.categoria == "outros" and not item.descricao.strip():
-            raise RegraNegocio(f"Nota {n}: descreva a despesa da categoria Outros.")
+        if item.categoria == CATEGORIA_DESCRICAO_OBRIGATORIA and not item.descricao.strip():
+            rotulo = CATEGORIAS_VIAGEM[CATEGORIA_DESCRICAO_OBRIGATORIA]
+            raise RegraNegocio(f"Nota {n}: descreva a despesa ({rotulo}).")
         if item.id is not None:
             if item.id not in existentes or item.id in ids:
                 raise RegraNegocio(f"Nota {n}: nota inválida.")
@@ -533,6 +666,505 @@ def _despesa_viagem(
 
 
 # ---------------------------------------------------------------------------
+# Adiantamento de viagem (diárias pagas antes; prestação de contas depois)
+# ---------------------------------------------------------------------------
+def criar_adiantamento(
+    db: Session,
+    settings: Settings,
+    usuario: Usuario,
+    dados: DadosAdiantamento,
+) -> Solicitacao:
+    perfil = db.scalar(select(CadastroUsuario).where(CadastroUsuario.email == usuario.email))
+    if perfil is None or not perfil.perfil_completo or perfil.centro_custo is None:
+        raise RegraNegocio("Complete seu perfil (matrícula e centro de custo) antes de pedir.")
+    diarias = _validar_adiantamento(dados)
+
+    agora = agora_utc()
+    pula_gestor = usuario.tem(GESTOR)
+    gestor = None if pula_gestor else _validar_gestor(db, settings, usuario, dados.gestor_email)
+    empresa = _empresa(db, dados.empresa_id)
+    valor = _valor_adiantamento(dados, diarias)
+    status = AGUARDANDO_PAGAMENTO if pula_gestor else AGUARDANDO_GESTOR
+
+    sol = Solicitacao(
+        tipo=TIPO_ADIANTAMENTO,
+        status=status,
+        solicitante_email=usuario.email,
+        solicitante_nome=usuario.nome,
+        matricula=perfil.matricula,
+        centro_custo=perfil.centro_custo.rotulo,
+        empresa=empresa.nome,
+        gestor_email=gestor.email if gestor else None,
+        gestor_nome=gestor.nome if gestor else None,
+        pula_gestor=pula_gestor,
+        descricao=dados.descricao.strip(),
+        destino=dados.destino.strip(),
+        viagem_inicio=dados.inicio,
+        viagem_fim=dados.fim,
+        diarias=diarias,
+        diaria_complementar=dados.complementar is not None,
+        valor_total=valor,
+        alerta_limite=_alerta_total(valor),
+        enviado_em=agora,
+        ultima_movimentacao_em=agora,
+    )
+    db.add(sol)
+    db.flush()
+    sol.codigo = f"REE-{sol.id:06d}"
+    _registrar(db, sol, "enviado", None, status, usuario, None, agora)
+    _avisar_pedido_adiantamento(db, settings, sol, f"{usuario.nome} pediu")
+    db.commit()
+    return sol
+
+
+def reenviar_adiantamento(
+    db: Session,
+    settings: Settings,
+    usuario: Usuario,
+    sol_id: int,
+    dados: DadosAdiantamento,
+) -> Solicitacao:
+    """Correção do pedido devolvido pelo gestor: volta para o gestor."""
+    sol = obter(db, usuario, sol_id)
+    _exigir(sol.solicitante_email == usuario.email, "Só quem pediu pode corrigir.")
+    _exigir_status(sol, DEVOLVIDO)
+    if sol.tipo != TIPO_ADIANTAMENTO:
+        raise RegraNegocio("Esta solicitação não é de adiantamento.")
+    diarias = _validar_adiantamento(dados)
+    if not sol.pula_gestor:
+        gestor = _validar_gestor(db, settings, usuario, dados.gestor_email)
+        sol.gestor_email, sol.gestor_nome = gestor.email, gestor.nome
+    sol.empresa = _empresa(db, dados.empresa_id).nome
+    sol.descricao = dados.descricao.strip()
+    sol.destino = dados.destino.strip()
+    sol.viagem_inicio, sol.viagem_fim = dados.inicio, dados.fim
+    sol.diarias = diarias
+    sol.diaria_complementar = dados.complementar is not None
+    sol.valor_total = _valor_adiantamento(dados, diarias)
+    sol.alerta_limite = _alerta_total(sol.valor_total)
+
+    agora = agora_utc()
+    sol.motivo_devolucao = None
+    sol.devolvido_por = sol.devolvido_em = sol.lembrete_expiracao_em = None
+    novo = AGUARDANDO_PAGAMENTO if sol.pula_gestor else AGUARDANDO_GESTOR
+    _mudar(db, sol, novo, "reenviado", usuario, None, agora)
+    _avisar_pedido_adiantamento(db, settings, sol, f"{usuario.nome} corrigiu e reenviou")
+    db.commit()
+    return sol
+
+
+def enviar_prestacao(
+    db: Session,
+    settings: Settings,
+    armazenamento: Armazenamento,
+    usuario: Usuario,
+    sol_id: int,
+    itens: tuple[ItemViagem, ...],
+    arquivos_enviados: list[arquivos.ArquivoValidado],
+) -> Solicitacao:
+    """Prestação de contas (primeira vez ou correção): as notas do que foi gasto.
+
+    Na correção vale a mesma regra do reembolso de viagem: notas com `id` são
+    mantidas, sem `id` são novas, e as que não vierem são removidas.
+    """
+    sol = obter(db, usuario, sol_id)
+    _exigir(sol.solicitante_email == usuario.email, "Só quem pediu presta contas.")
+    if sol.tipo != TIPO_ADIANTAMENTO:
+        raise RegraNegocio("Esta solicitação não é de adiantamento.")
+    if sol.status not in (AGUARDANDO_PRESTACAO, PRESTACAO_DEVOLVIDA):
+        _exigir_status(sol, AGUARDANDO_PRESTACAO)
+    atuais = {d.id: d for d in sol.despesas if d.categoria != COMPROVANTE_DEVOLUCAO}
+    _validar_itens(itens, arquivos_enviados, existentes=set(atuais))
+
+    agora = agora_utc()
+    primeira = sol.status == AGUARDANDO_PRESTACAO
+    novas_chaves: list[str] = []
+    chaves_antigas: list[str] = []
+    try:
+        _sincronizar_notas(
+            sol,
+            atuais,
+            itens,
+            arquivos_enviados,
+            armazenamento,
+            agora,
+            novas_chaves,
+            chaves_antigas,
+        )
+        sol.valor_gasto = _total(itens)
+        sol.alerta_limite = _alerta_viagem(itens)
+        sol.prestacao_enviada_em = agora
+        sol.motivo_devolucao = None
+        sol.devolvido_por = sol.devolvido_em = None
+        acao = "prestacao_enviada" if primeira else "prestacao_reenviada"
+        _mudar(db, sol, PRESTACAO_EM_CONFERENCIA, acao, usuario, None, agora)
+        notificacoes.enfileirar(
+            db,
+            settings,
+            sol,
+            notificacoes.emails_financeiro(db),
+            "Prestação de contas para conferir",
+            f"{usuario.nome} {'enviou' if primeira else 'corrigiu e reenviou'} a prestação "
+            f"de contas do adiantamento: gasto de {moeda(sol.valor_gasto)}.",
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        for chave in novas_chaves:
+            armazenamento.remover(chave)
+        raise
+    for chave in chaves_antigas:
+        armazenamento.remover(chave)
+    return sol
+
+
+def enviar_comprovante(
+    db: Session,
+    settings: Settings,
+    armazenamento: Armazenamento,
+    usuario: Usuario,
+    sol_id: int,
+    data_transferencia: date,
+    arquivo: arquivos.ArquivoValidado,
+) -> Solicitacao:
+    """Comprovante da transferência da sobra (os dados bancários a Thais passa por fora)."""
+    sol = obter(db, usuario, sol_id)
+    _exigir(sol.solicitante_email == usuario.email, "Só quem pediu envia o comprovante.")
+    _exigir_status(sol, AGUARDANDO_DEVOLUCAO)
+    if data_transferencia > date.today():
+        raise RegraNegocio("A data da transferência não pode ser no futuro.")
+    sobra = saldo(sol) or Decimal("0.00")
+
+    agora = agora_utc()
+    anteriores = [d for d in sol.despesas if d.categoria == COMPROVANTE_DEVOLUCAO]
+    chave = arquivos.salvar(armazenamento, arquivo, sol.codigo or "", agora)
+    try:
+        for antigo in anteriores:
+            sol.despesas.remove(antigo)
+        sol.despesas.append(
+            Despesa(
+                categoria=COMPROVANTE_DEVOLUCAO,
+                data_despesa=data_transferencia,
+                valor=sobra,
+                descricao="Comprovante da devolução",
+                arquivo_chave=chave,
+                arquivo_nome=arquivo.nome,
+                arquivo_tipo=arquivo.tipo,
+                arquivo_tamanho=len(arquivo.conteudo),
+                criado_em=agora,
+            )
+        )
+        sol.motivo_devolucao = None
+        sol.devolvido_por = sol.devolvido_em = None
+        _mudar(
+            db,
+            sol,
+            DEVOLUCAO_EM_CONFERENCIA,
+            "comprovante_enviado",
+            usuario,
+            f"Transferência em {data_transferencia:%d/%m/%Y}",
+            agora,
+        )
+        notificacoes.enfileirar(
+            db,
+            settings,
+            sol,
+            notificacoes.emails_financeiro(db),
+            "Devolução de adiantamento para confirmar",
+            f"{usuario.nome} enviou o comprovante da devolução de {moeda(sobra)}. "
+            "Confirme quando o valor cair na conta.",
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        armazenamento.remover(chave)
+        raise
+    for antigo in anteriores:
+        armazenamento.remover(antigo.arquivo_chave)
+    return sol
+
+
+def confirmar_devolucao(
+    db: Session,
+    settings: Settings,
+    usuario: Usuario,
+    sol_id: int,
+    aprovar: bool,
+    comentario: str | None,
+) -> Solicitacao:
+    """A Thais confirma que a sobra caiu na conta (encerra) ou recusa o comprovante."""
+    sol = obter(db, usuario, sol_id)
+    _exigir(usuario.tem(FINANCEIRO), "Só o financeiro confirma a devolução.")
+    _exigir(sol.solicitante_email != usuario.email, OUTRO_FINANCEIRO)
+    _exigir_status(sol, DEVOLUCAO_EM_CONFERENCIA)
+    agora = agora_utc()
+    if not aprovar:
+        motivo = (comentario or "").strip()
+        if not motivo:
+            raise RegraNegocio("Explique o que há de errado com o comprovante.")
+        sol.devolvido_por, sol.devolvido_em, sol.motivo_devolucao = usuario.nome, agora, motivo
+        _mudar(db, sol, AGUARDANDO_DEVOLUCAO, "comprovante_recusado", usuario, motivo, agora)
+        notificacoes.enfileirar(
+            db,
+            settings,
+            sol,
+            [sol.solicitante_email],
+            "Comprovante de devolução recusado",
+            f"{usuario.nome} recusou o comprovante: {motivo}",
+        )
+        db.commit()
+        return sol
+
+    sol.devolucao_confirmada_por, sol.devolucao_confirmada_em = usuario.nome, agora
+    _encerrar(db, sol, "devolucao_confirmada", usuario, comentario, agora)
+    notificacoes.enfileirar(
+        db,
+        settings,
+        sol,
+        [sol.solicitante_email],
+        "Adiantamento encerrado",
+        "O financeiro confirmou o recebimento da devolução. O adiantamento está encerrado.",
+    )
+    db.commit()
+    return sol
+
+
+def _conferir_prestacao(
+    db: Session,
+    settings: Settings,
+    sol: Solicitacao,
+    usuario: Usuario,
+    aprovar: bool,
+    comentario: str | None,
+) -> Solicitacao:
+    agora = agora_utc()
+    if not aprovar:
+        return _devolver(db, settings, sol, usuario, comentario, agora, para=PRESTACAO_DEVOLVIDA)
+
+    sol.prestacao_conferida_por, sol.prestacao_conferida_em = usuario.nome, agora
+    diferenca = saldo(sol) or Decimal("0.00")
+    if diferenca > 0:
+        _mudar(db, sol, AGUARDANDO_DEVOLUCAO, "prestacao_conferida", usuario, comentario, agora)
+        texto = (
+            f"A prestação de contas foi conferida. Sobrou {moeda(diferenca)}: faça a "
+            "transferência (o financeiro passa os dados bancários) e anexe o comprovante."
+        )
+    elif diferenca == 0:
+        _encerrar(db, sol, "prestacao_conferida", usuario, comentario, agora)
+        texto = "A prestação de contas foi conferida e bateu com o adiantamento. Encerrada."
+    elif sol.pula_gestor:
+        _mudar(
+            db,
+            sol,
+            DIFERENCA_AGUARDANDO_PAGAMENTO,
+            "prestacao_conferida",
+            usuario,
+            comentario,
+            agora,
+        )
+        texto = (
+            f"A prestação de contas foi conferida. Você gastou {moeda(-diferenca)} a mais; "
+            "como você é gestor, a diferença segue direto para pagamento."
+        )
+    else:
+        _mudar(
+            db,
+            sol,
+            DIFERENCA_AGUARDANDO_GESTOR,
+            "prestacao_conferida",
+            usuario,
+            comentario,
+            agora,
+        )
+        texto = (
+            f"A prestação de contas foi conferida. Você gastou {moeda(-diferenca)} a mais; "
+            "a diferença foi para a aprovação do seu gestor."
+        )
+    notificacoes.enfileirar(
+        db, settings, sol, [sol.solicitante_email], "Prestação de contas conferida", texto
+    )
+    # Resumo para a Thais e o gestor (só informativo, exceto quando há diferença a aprovar).
+    resumo = _resumo_prestacao(sol)
+    if sol.gestor_email:
+        acao_gestor = (
+            "\nA diferença precisa da sua aprovação."
+            if sol.status == DIFERENCA_AGUARDANDO_GESTOR
+            else ""
+        )
+        notificacoes.enfileirar(
+            db,
+            settings,
+            sol,
+            [sol.gestor_email],
+            "Resumo da prestação de contas",
+            resumo + acao_gestor,
+        )
+    notificacoes.enfileirar(
+        db,
+        settings,
+        sol,
+        notificacoes.emails_financeiro(db),
+        "Resumo da prestação de contas",
+        resumo,
+    )
+    db.commit()
+    return sol
+
+
+def _decidir_diferenca(
+    db: Session,
+    settings: Settings,
+    sol: Solicitacao,
+    usuario: Usuario,
+    aprovar: bool,
+    comentario: str | None,
+) -> Solicitacao:
+    agora = agora_utc()
+    if not aprovar:
+        # As notas precisam mudar: volta para o colaborador e depois para a Thais.
+        return _devolver(db, settings, sol, usuario, comentario, agora, para=PRESTACAO_DEVOLVIDA)
+    sol.diferenca_aprovada_por, sol.diferenca_aprovada_em = usuario.nome, agora
+    _mudar(
+        db, sol, DIFERENCA_AGUARDANDO_PAGAMENTO, "diferenca_aprovada", usuario, comentario, agora
+    )
+    falta = -(saldo(sol) or Decimal("0.00"))
+    notificacoes.enfileirar(
+        db,
+        settings,
+        sol,
+        [sol.solicitante_email],
+        "Diferença aprovada",
+        f"{usuario.nome} aprovou a diferença de {moeda(falta)}. Agora falta o pagamento.",
+    )
+    notificacoes.enfileirar(
+        db,
+        settings,
+        sol,
+        notificacoes.emails_financeiro(db),
+        "Diferença aprovada — pagar",
+        f"{usuario.nome} aprovou a diferença de {moeda(falta)} do adiantamento.",
+    )
+    db.commit()
+    return sol
+
+
+def _pagar_diferenca(
+    db: Session, settings: Settings, sol: Solicitacao, usuario: Usuario, data_pagamento: date
+) -> Solicitacao:
+    agora = agora_utc()
+    sol.data_pagamento_diferenca = data_pagamento
+    _encerrar(
+        db, sol, "diferenca_paga", usuario, f"Diferença paga em {data_pagamento:%d/%m/%Y}", agora
+    )
+    falta = -(saldo(sol) or Decimal("0.00"))
+    notificacoes.enfileirar(
+        db,
+        settings,
+        sol,
+        [sol.solicitante_email],
+        "Diferença paga",
+        f"A diferença de {moeda(falta)} foi paga em {data_pagamento:%d/%m/%Y}. "
+        "O adiantamento está encerrado.",
+    )
+    db.commit()
+    return sol
+
+
+def _encerrar(
+    db: Session,
+    sol: Solicitacao,
+    acao: str,
+    usuario: Usuario,
+    comentario: str | None,
+    agora: datetime,
+) -> None:
+    sol.encerrado_em = agora
+    _mudar(db, sol, ENCERRADO, acao, usuario, comentario, agora)
+
+
+def _resumo_prestacao(sol: Solicitacao) -> str:
+    diferenca = saldo(sol) or Decimal("0.00")
+    if diferenca > 0:
+        resultado = f"Sobrou {moeda(diferenca)} (o colaborador vai devolver)."
+    elif diferenca < 0:
+        resultado = f"Gastou {moeda(-diferenca)} a mais (diferença a reembolsar)."
+    else:
+        resultado = "Bateu certinho (encerrada)."
+    notas = len([d for d in sol.despesas if d.categoria != COMPROVANTE_DEVOLUCAO])
+    return (
+        f"Prestação de contas do adiantamento de {sol.solicitante_nome} "
+        f"({sol.destino}).\n"
+        f"Adiantado: {moeda(sol.valor_total)} ({_descrever_diarias(sol)}).\n"
+        f"Gasto comprovado: {moeda(sol.valor_gasto or 0)} em {notas} nota(s).\n"
+        f"{resultado}"
+    )
+
+
+def _avisar_pedido_adiantamento(
+    db: Session, settings: Settings, sol: Solicitacao, quem: str
+) -> None:
+    if sol.status == AGUARDANDO_GESTOR:
+        notificacoes.enfileirar(
+            db,
+            settings,
+            sol,
+            [sol.gestor_email or ""],
+            "Adiantamento aguardando sua aprovação",
+            f"{quem} um adiantamento de {_descrever_diarias(sol)} para {sol.destino}.",
+        )
+    else:
+        notificacoes.enfileirar(
+            db,
+            settings,
+            sol,
+            notificacoes.emails_financeiro(db),
+            "Adiantamento para pagar",
+            f"{quem} um adiantamento de {_descrever_diarias(sol)} para {sol.destino}. "
+            "Como o solicitante é gestor, não passa por aprovação.",
+        )
+
+
+def _descrever_diarias(sol: Solicitacao) -> str:
+    if sol.diaria_complementar:
+        return f"diária complementar de {moeda(sol.valor_total)} ({sol.diarias} dia(s))"
+    return f"{sol.diarias} diária(s)"
+
+
+def _validar_adiantamento(dados: DadosAdiantamento) -> int:
+    if not dados.destino.strip():
+        raise RegraNegocio("Informe o destino da viagem.")
+    if len(dados.destino) > 200:
+        raise RegraNegocio("Destino muito longo (máximo 200 caracteres).")
+    if dados.fim < dados.inicio:
+        raise RegraNegocio("O fim da viagem não pode ser antes do início.")
+    if not dados.descricao.strip():
+        raise RegraNegocio("Explique o motivo da viagem.")
+    if len(dados.descricao) > 500:
+        raise RegraNegocio("Justificativa muito longa (máximo 500 caracteres).")
+    if dados.complementar is not None and dados.complementar <= 0:
+        raise RegraNegocio("Informe o valor da diária complementar.")
+    diarias = calcular_diarias(dados.inicio, dados.fim)
+    if diarias > MAX_DIARIAS:
+        raise RegraNegocio(
+            f"Período longo demais ({diarias} dias). Confira as datas "
+            f"(máximo {MAX_DIARIAS} diárias)."
+        )
+    return diarias
+
+
+def _valor_adiantamento(dados: DadosAdiantamento, diarias: int) -> Decimal:
+    if dados.complementar is None:
+        return VALOR_DIARIA * diarias
+    return dados.complementar
+
+
+def _alerta_total(valor: Decimal) -> str | None:
+    if valor > LIMITE_SOLICITACAO:
+        return f"Total acima do limite por solicitação ({moeda(LIMITE_SOLICITACAO)})."
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Decisões
 # ---------------------------------------------------------------------------
 def conferir(
@@ -545,6 +1177,9 @@ def conferir(
 ) -> Solicitacao:
     sol = obter(db, usuario, sol_id)
     _exigir(usuario.tem(FINANCEIRO), "Só o financeiro confere.")
+    _exigir(sol.solicitante_email != usuario.email, OUTRO_FINANCEIRO)
+    if sol.status == PRESTACAO_EM_CONFERENCIA:
+        return _conferir_prestacao(db, settings, sol, usuario, aprovar, comentario)
     _exigir_status(sol, EM_CONFERENCIA)
     agora = agora_utc()
     if not aprovar:
@@ -585,6 +1220,8 @@ def decidir_gestor(
         usuario.tem(GESTOR) and sol.gestor_email == usuario.email,
         "Só o gestor escolhido pode aprovar.",
     )
+    if sol.status == DIFERENCA_AGUARDANDO_GESTOR:
+        return _decidir_diferenca(db, settings, sol, usuario, aprovar, comentario)
     _exigir_status(sol, AGUARDANDO_GESTOR)
     agora = agora_utc()
     if not aprovar:
@@ -617,24 +1254,41 @@ def pagar(
 ) -> Solicitacao:
     sol = obter(db, usuario, sol_id)
     _exigir(usuario.tem(FINANCEIRO), "Só o financeiro registra pagamento.")
+    if sol.status == DIFERENCA_AGUARDANDO_PAGAMENTO:
+        return _pagar_diferenca(db, settings, sol, usuario, data_pagamento)
     _exigir_status(sol, AGUARDANDO_PAGAMENTO)
     agora = agora_utc()
     sol.pago_por, sol.pago_em, sol.data_pagamento = usuario.nome, agora, data_pagamento
-    _mudar(db, sol, PAGO, "pago", usuario, f"Pagamento em {data_pagamento:%d/%m/%Y}", agora)
-    notificacoes.enfileirar(
-        db,
-        settings,
-        sol,
-        [sol.solicitante_email],
-        "Reembolso pago",
-        f"O reembolso foi pago em {data_pagamento:%d/%m/%Y}.",
-    )
+    comentario = f"Pagamento em {data_pagamento:%d/%m/%Y}"
+    if sol.tipo == TIPO_ADIANTAMENTO:
+        _mudar(db, sol, AGUARDANDO_PRESTACAO, "pago", usuario, comentario, agora)
+        notificacoes.enfileirar(
+            db,
+            settings,
+            sol,
+            [sol.solicitante_email],
+            "Adiantamento pago",
+            f"O adiantamento foi pago em {data_pagamento:%d/%m/%Y}. Depois da viagem, "
+            "faça a prestação de contas no sistema, com as notas.",
+        )
+    else:
+        _mudar(db, sol, PAGO, "pago", usuario, comentario, agora)
+        notificacoes.enfileirar(
+            db,
+            settings,
+            sol,
+            [sol.solicitante_email],
+            "Reembolso pago",
+            f"O reembolso foi pago em {data_pagamento:%d/%m/%Y}.",
+        )
     db.commit()
     return sol
 
 
 def processar_expiracoes(db: Session, settings: Settings, agora: datetime | None = None) -> dict:
-    """Lembra no 5º dia e cancela no 7º as devolvidas paradas. Idempotente."""
+    """Devolvidas paradas: lembra 2 dias antes e cancela no prazo. Adiantamentos
+    sem prestação de contas: lembra antes do prazo e avisa quando vence.
+    Idempotente."""
     agora = agora or agora_utc()
     lembretes = cancelamentos = 0
     devolvidas = db.scalars(select(Solicitacao).where(Solicitacao.status == DEVOLVIDO)).all()
@@ -668,10 +1322,64 @@ def processar_expiracoes(db: Session, settings: Settings, agora: datetime | None
                 "será cancelada.",
             )
             lembretes += 1
+    lembretes_prestacao, prestacoes_vencidas = _verificar_prazo_prestacao(db, settings, agora)
     db.commit()
-    if lembretes or cancelamentos:
-        log.info("Expiração: %s lembrete(s), %s cancelamento(s).", lembretes, cancelamentos)
-    return {"lembretes": lembretes, "cancelamentos": cancelamentos}
+    if lembretes or cancelamentos or lembretes_prestacao or prestacoes_vencidas:
+        log.info(
+            "Expiração: %s lembrete(s), %s cancelamento(s); prestação: %s lembrete(s), "
+            "%s vencida(s).",
+            lembretes,
+            cancelamentos,
+            lembretes_prestacao,
+            prestacoes_vencidas,
+        )
+    return {
+        "lembretes": lembretes,
+        "cancelamentos": cancelamentos,
+        "lembretes_prestacao": lembretes_prestacao,
+        "prestacoes_vencidas": prestacoes_vencidas,
+    }
+
+
+def _verificar_prazo_prestacao(db: Session, settings: Settings, agora: datetime) -> tuple[int, int]:
+    hoje = agora.date()
+    lembretes = vencidas = 0
+    pendentes = db.scalars(
+        select(Solicitacao).where(Solicitacao.status == AGUARDANDO_PRESTACAO)
+    ).all()
+    for sol in pendentes:
+        prazo = prazo_prestacao(sol)
+        if prazo is None:
+            continue
+        if hoje > prazo and sol.aviso_prestacao_vencida_em is None:
+            sol.aviso_prestacao_vencida_em = agora
+            notificacoes.enfileirar(
+                db,
+                settings,
+                sol,
+                [sol.solicitante_email, *notificacoes.emails_financeiro(db)],
+                "Prestação de contas atrasada",
+                f"O prazo da prestação de contas do adiantamento ({sol.destino}) venceu em "
+                f"{prazo:%d/%m/%Y}. Envie as notas o quanto antes.",
+            )
+            vencidas += 1
+        elif (
+            hoje >= prazo - timedelta(days=DIAS_LEMBRETE_PRESTACAO)
+            and hoje <= prazo
+            and sol.lembrete_prestacao_em is None
+        ):
+            sol.lembrete_prestacao_em = agora
+            notificacoes.enfileirar(
+                db,
+                settings,
+                sol,
+                [sol.solicitante_email],
+                "Lembrete: prestação de contas",
+                f"A prestação de contas do adiantamento ({sol.destino}) vence em "
+                f"{prazo:%d/%m/%Y}. Envie as notas pelo sistema.",
+            )
+            lembretes += 1
+    return lembretes, vencidas
 
 
 # ---------------------------------------------------------------------------
@@ -684,20 +1392,28 @@ def _devolver(
     usuario: Usuario,
     comentario: str | None,
     agora: datetime,
+    para: str = DEVOLVIDO,
 ) -> Solicitacao:
     motivo = (comentario or "").strip()
     if not motivo:
         raise RegraNegocio("Explique o que precisa ser corrigido.")
     sol.devolvido_por, sol.devolvido_em, sol.motivo_devolucao = usuario.nome, agora, motivo
     sol.lembrete_expiracao_em = None
-    _mudar(db, sol, DEVOLVIDO, "devolvido", usuario, motivo, agora)
+    _mudar(db, sol, para, "devolvido", usuario, motivo, agora)
+    if para == DEVOLVIDO:
+        texto = (
+            f"{usuario.nome} devolveu: {motivo}\nCorrija em até {DIAS_EXPIRACAO_DEVOLVIDO} dias."
+        )
+    else:
+        # Prestação de contas: o dinheiro já foi pago, então não cancela sozinha.
+        texto = f"{usuario.nome} devolveu a prestação de contas: {motivo}"
     notificacoes.enfileirar(
         db,
         settings,
         sol,
         [sol.solicitante_email],
         "Solicitação devolvida para correção",
-        f"{usuario.nome} devolveu: {motivo}\nCorrija em até {DIAS_EXPIRACAO_DEVOLVIDO} dias.",
+        texto,
     )
     db.commit()
     return sol

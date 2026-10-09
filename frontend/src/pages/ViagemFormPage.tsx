@@ -1,33 +1,13 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
 import { useContexto } from '@/components/contexto'
+import NotasViagem from '@/components/NotasViagem'
 import { useApi } from '@/hooks/useApi'
+import { anexarNotas, conferirNotas, novaNota, notasEnviadas, type NotaForm } from '@/notas'
 import { api } from '@/services/api'
 import ui from '@/styles/ui.module.css'
-import type { Cadastros, CategoriaViagem, Gestor, Solicitacao } from '@/types'
-import { alertasViagem, formatarMoeda, hojeISO, mensagemErro, somarValores } from '@/utils'
-import styles from './ViagemFormPage.module.css'
-
-const ACEITOS = 'image/jpeg,image/png,application/pdf'
-const MAX_NOTAS = 30
-
-interface NotaForm {
-  chave: number
-  /** Só na correção: nota que já foi enviada. */
-  id?: number
-  categoria: CategoriaViagem | ''
-  data: string
-  valor: string
-  descricao: string
-  arquivo: File | null
-  /** Nome da nota já enviada (correção), mostrado enquanto não for trocada. */
-  arquivoAtual?: string
-}
-
-let proximaChave = 1
-function novaNota(): NotaForm {
-  return { chave: proximaChave++, categoria: '', data: '', valor: '', descricao: '', arquivo: null }
-}
+import type { Cadastros, Gestor, Solicitacao } from '@/types'
+import { mensagemErro } from '@/utils'
 
 // Reembolso de viagem (o colaborador pagou e pede depois, com as notas), ou a
 // correção de um devolvido (/solicitacoes/:id/corrigir-viagem). Mesmo fluxo da
@@ -74,77 +54,27 @@ export default function ViagemFormPage() {
       setDescricao(s.descricao)
       setEmpresa(String(cadastros.empresas.find((e) => e.nome === s.empresa)?.id ?? ''))
       setGestor(s.gestor_email ?? '')
-      setNotas(
-        s.despesas.map((d) => ({
-          chave: proximaChave++,
-          id: d.id,
-          categoria: d.categoria as CategoriaViagem,
-          data: d.data_despesa,
-          valor: Number(d.valor).toFixed(2).replace('.', ','),
-          descricao: d.descricao ?? '',
-          arquivo: null,
-          arquivoAtual: d.arquivo_nome,
-        }))
-      )
+      setNotas(notasEnviadas(s.despesas))
     })
   }, [id, cadastros])
-
-  const total = useMemo(() => somarValores(notas.map((n) => n.valor)), [notas])
-  const alertas = useMemo(
-    () =>
-      alertasViagem(
-        notas.map((n) => ({ categoria: n.categoria, data: n.data, valor: n.valor })),
-        Number(cadastros?.limite_refeicao_dia ?? 0),
-        Number(cadastros?.limite_solicitacao ?? 0)
-      ),
-    [notas, cadastros]
-  )
-
-  function mudarNota(chave: number, mudanca: Partial<NotaForm>) {
-    setNotas((atual) => atual.map((n) => (n.chave === chave ? { ...n, ...mudanca } : n)))
-  }
-
-  function removerNota(chave: number) {
-    setNotas((atual) => atual.filter((n) => n.chave !== chave))
-  }
 
   async function enviar(e: FormEvent) {
     e.preventDefault()
     setErro(null)
-    if (notas.length === 0) {
-      setErro('Inclua pelo menos uma nota.')
-      return
-    }
-    const semArquivo = notas.findIndex((n) => !n.arquivo && !n.id)
-    if (semArquivo >= 0) {
-      setErro(`Nota ${semArquivo + 1}: anexe a foto ou o PDF.`)
+    const problema = conferirNotas(notas)
+    if (problema) {
+      setErro(problema)
       return
     }
 
-    // Os arquivos vão numa lista; cada nota diz a posição do seu arquivo nela.
     const form = new FormData()
-    const despesas = notas.map((n) => {
-      let arquivo: number | undefined
-      if (n.arquivo) {
-        arquivo = form.getAll('arquivos').length
-        form.append('arquivos', n.arquivo)
-      }
-      return {
-        ...(n.id ? { id: n.id } : {}),
-        categoria: n.categoria,
-        data_despesa: n.data,
-        valor: n.valor,
-        descricao: n.descricao,
-        ...(arquivo !== undefined ? { arquivo } : {}),
-      }
-    })
+    anexarNotas(form, notas)
     form.append('destino', destino)
     form.append('viagem_inicio', inicio)
     form.append('viagem_fim', fim)
     form.append('descricao', descricao)
     form.append('empresa_id', empresa)
     if (!pulaGestor) form.append('gestor_email', gestor)
-    form.append('despesas', JSON.stringify(despesas))
 
     setEnviando(true)
     try {
@@ -272,106 +202,7 @@ export default function ViagemFormPage() {
         )}
 
         <h2 className={ui.subtitulo}>Notas</h2>
-        <div className={styles.notas}>
-          {notas.map((n, i) => (
-            <fieldset key={n.chave} className={styles.nota}>
-              <div className={styles.notaCabecalho}>
-                <span>Nota {i + 1}</span>
-                {notas.length > 1 && (
-                  <button type="button" className={styles.remover} onClick={() => removerNota(n.chave)}>
-                    Remover
-                  </button>
-                )}
-              </div>
-              <div className={styles.linha}>
-                <div className={ui.campo}>
-                  <label htmlFor={`cat-${n.chave}`}>Categoria</label>
-                  <select
-                    id={`cat-${n.chave}`}
-                    value={n.categoria}
-                    onChange={(e) => mudarNota(n.chave, { categoria: e.target.value as CategoriaViagem })}
-                    required
-                  >
-                    <option value="">Selecione…</option>
-                    {cadastros?.categorias_viagem.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.rotulo}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className={ui.campo}>
-                  <label htmlFor={`data-${n.chave}`}>Data</label>
-                  <input
-                    id={`data-${n.chave}`}
-                    type="date"
-                    value={n.data}
-                    max={hojeISO()}
-                    onChange={(e) => mudarNota(n.chave, { data: e.target.value })}
-                    required
-                  />
-                </div>
-                <div className={ui.campo}>
-                  <label htmlFor={`valor-${n.chave}`}>Valor (R$)</label>
-                  <input
-                    id={`valor-${n.chave}`}
-                    inputMode="decimal"
-                    placeholder="0,00"
-                    value={n.valor}
-                    onChange={(e) => mudarNota(n.chave, { valor: e.target.value })}
-                    required
-                  />
-                </div>
-              </div>
-              <div className={ui.campo}>
-                <label htmlFor={`desc-${n.chave}`}>
-                  Descrição {n.categoria === 'outros' ? '' : '(opcional)'}
-                </label>
-                <input
-                  id={`desc-${n.chave}`}
-                  value={n.descricao}
-                  maxLength={200}
-                  placeholder={n.categoria === 'outros' ? 'Ex.: Estacionamento' : ''}
-                  onChange={(e) => mudarNota(n.chave, { descricao: e.target.value })}
-                  required={n.categoria === 'outros'}
-                />
-              </div>
-              <div className={ui.campo}>
-                <label htmlFor={`arq-${n.chave}`}>
-                  {n.id ? 'Trocar a nota (opcional)' : 'Foto ou PDF da nota'}
-                </label>
-                <input
-                  id={`arq-${n.chave}`}
-                  type="file"
-                  accept={ACEITOS}
-                  onChange={(e) => mudarNota(n.chave, { arquivo: e.target.files?.[0] ?? null })}
-                />
-                {n.arquivoAtual && !n.arquivo && (
-                  <span className={ui.ajuda}>Nota atual: {n.arquivoAtual}</span>
-                )}
-              </div>
-            </fieldset>
-          ))}
-        </div>
-
-        <div className={styles.rodape}>
-          <button
-            type="button"
-            className={`${ui.botao} ${ui.secundario}`}
-            disabled={notas.length >= MAX_NOTAS}
-            onClick={() => setNotas((atual) => [...atual, novaNota()])}
-          >
-            + Adicionar nota
-          </button>
-          <span className={styles.total}>Total: {formatarMoeda(total)}</span>
-        </div>
-        <span className={ui.ajuda}>JPG, PNG ou PDF, até 10 MB cada. No celular, dá para tirar a foto na hora.</span>
-
-        {alertas.map((a) => (
-          <div key={a} className={ui.aviso}>
-            {a} Você pode enviar mesmo assim — o financeiro vai ver o alerta.
-          </div>
-        ))}
+        <NotasViagem notas={notas} setNotas={setNotas} cadastros={cadastros} />
 
         {erro && <div className={ui.erro}>{erro}</div>}
 

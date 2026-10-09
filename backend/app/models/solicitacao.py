@@ -1,7 +1,8 @@
 """Solicitação de reembolso, despesas (notas), histórico e caixa de saída de e-mails.
 
 Uma `Solicitacao` serve para todos os tipos: "alimentacao" (uma nota) e
-"viagem" (reembolso de viagem, várias notas). O adiantamento entra depois.
+"viagem" (reembolso de viagem, várias notas) e "adiantamento" (diárias pagas
+antes da viagem; depois, a prestação de contas com as notas).
 Dados do solicitante que podem mudar com o tempo (matrícula, centro de custo,
 empresa) são COPIADOS no envio, para o histórico não mudar
 se a pessoa trocar de área.
@@ -54,6 +55,23 @@ class Solicitacao(Base):
     destino: Mapped[str | None] = mapped_column(String(200), nullable=True)
     viagem_inicio: Mapped[date | None] = mapped_column(Date, nullable=True)
     viagem_fim: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # Só em adiantamento: quantas diárias foram pagas antes da viagem. O valor
+    # adiantado fica em `valor_total`; o gasto comprovado, em `valor_gasto`.
+    diarias: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Diária complementar (quem recebe auxílio refeição): valor informado.
+    diaria_complementar: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    valor_gasto: Mapped[Decimal | None] = mapped_column(DINHEIRO, nullable=True)
+    prestacao_enviada_em: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    prestacao_conferida_por: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    prestacao_conferida_em: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    devolucao_confirmada_por: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    devolucao_confirmada_em: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    diferenca_aprovada_por: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    diferenca_aprovada_em: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    data_pagamento_diferenca: Mapped[date | None] = mapped_column(Date, nullable=True)
+    encerrado_em: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    lembrete_prestacao_em: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    aviso_prestacao_vencida_em: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     moeda: Mapped[str] = mapped_column(String(3), nullable=False, default="BRL")
     valor_total: Mapped[Decimal] = mapped_column(DINHEIRO, nullable=False)
     alerta_limite: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -97,7 +115,12 @@ class Solicitacao(Base):
 
 
 class Despesa(Base):
-    """Uma nota fiscal. Alimentação tem exatamente uma; viagem, uma ou mais."""
+    """Uma nota fiscal. Alimentação tem exatamente uma; viagem, uma ou mais.
+
+    No adiantamento, as notas são as da prestação de contas, e o comprovante da
+    transferência da sobra também fica aqui, com a categoria
+    `comprovante_devolucao` (não entra na soma do gasto).
+    """
 
     __tablename__ = "despesas"
 
