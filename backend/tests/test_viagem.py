@@ -63,7 +63,7 @@ def enviar_viagem(cliente, notas, arquivos, rota="/api/solicitacoes/viagem", **e
 TRES_NOTAS = [
     nota("refeicao", "45,90", arquivo=0),
     nota("hospedagem", "320,00", arquivo=1),
-    nota("transporte", "88,10", arquivo=2, descricao="Táxi aeroporto"),
+    nota("taxi_uber", "88,10", arquivo=2, descricao="Táxi aeroporto"),
 ]
 TRES_ARQUIVOS = [
     ("almoco.jpg", JPG, "image/jpeg"),
@@ -90,9 +90,9 @@ def test_fluxo_completo_com_tres_notas(cenario):
     assert sol["alerta_limite"] is None
     cats = [(d["categoria"], d["categoria_rotulo"], d["valor"]) for d in sol["despesas"]]
     assert cats == [
-        ("refeicao", "Refeição", "45.90"),
+        ("refeicao", "Refeição - Nacional", "45.90"),
         ("hospedagem", "Hospedagem", "320.00"),
-        ("transporte", "Transporte / translado", "88.10"),
+        ("taxi_uber", "Taxi ou Uber", "88.10"),
     ]
     assert sol["despesas"][2]["descricao"] == "Táxi aeroporto"
 
@@ -145,7 +145,7 @@ def test_hospedagem_cara_nao_gera_alerta_de_refeicao(cenario):
 
 
 def test_alerta_total_acima_do_limite(cenario):
-    notas = [nota("hospedagem", "3000,00", arquivo=0), nota("transporte", "2500,00", arquivo=1)]
+    notas = [nota("hospedagem", "3000,00", arquivo=0), nota("taxi_uber", "2500,00", arquivo=1)]
     sol = criar_viagem(cenario, notas, TRES_ARQUIVOS[:2])
     assert "Total acima do limite por solicitação" in sol["alerta_limite"]
     assert sol["valor_total"] == "5500.00"
@@ -159,7 +159,7 @@ def test_alerta_total_acima_do_limite(cenario):
         ([nota(arquivo=3)], TRES_ARQUIVOS[:1], {}, "Nota 1: arquivo inválido"),
         ([nota(arquivo=0), nota(arquivo=0)], TRES_ARQUIVOS[:1], {}, "Nota 2: arquivo inválido"),
         ([nota("bebida", arquivo=0)], TRES_ARQUIVOS[:1], {}, "Nota 1: categoria inválida"),
-        ([nota("outros", arquivo=0)], TRES_ARQUIVOS[:1], {}, "Outros"),
+        ([nota("despesas_diversas", arquivo=0)], TRES_ARQUIVOS[:1], {}, "Despesas diversas"),
         (
             [nota(dia=HOJE + timedelta(days=1), arquivo=0)],
             TRES_ARQUIVOS[:1],
@@ -264,7 +264,10 @@ def test_correcao_exige_arquivo_em_nota_nova(cenario):
     sol = criar_viagem(cenario)
     decidir(cenario, sol["id"], "conferir", THAIS, "financeiro", aprovar=False, comentario="Ajuste")
     entrar(cenario, COLAB, "", "Colab")
-    notas = [nota(id=sol["despesas"][0]["id"]), nota("outros", descricao="Estacionamento")]
+    notas = [
+        nota(id=sol["despesas"][0]["id"]),
+        nota("despesas_diversas", descricao="Estacionamento"),
+    ]
     r = enviar_viagem(cenario, notas, [], rota=f"/api/solicitacoes/{sol['id']}/reenviar-viagem")
     assert r.status_code == 400 and "Nota 2: anexe" in r.json()["detail"]
 
@@ -313,13 +316,11 @@ def test_rotas_de_correcao_nao_se_misturam(cenario):
 def test_cadastros_trazem_categorias(cenario):
     entrar(cenario, COLAB, "", "Colab")
     dados = cenario.get("/api/cadastros").json()
-    assert [c["id"] for c in dados["categorias_viagem"]] == [
-        "refeicao",
-        "hospedagem",
-        "transporte",
-        "lavanderia",
-        "outros",
-    ]
+    ids = [c["id"] for c in dados["categorias_viagem"]]
+    assert len(ids) == 16 and ids[0] == "refeicao"
+    assert {"taxi_uber", "quilometragem", "despesas_diversas", "hospedagem"} <= set(ids)
+    rotulos = {c["id"]: c["rotulo"] for c in dados["categorias_viagem"]}
+    assert rotulos["refeicao"] == "Refeição - Nacional"
     assert dados["limite_solicitacao"] == "5000.00"
 
 

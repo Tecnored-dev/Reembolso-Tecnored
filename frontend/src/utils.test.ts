@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   alertasViagem,
+  calcularDiarias,
   caminhoInterno,
   formatarData,
   formatarMoeda,
@@ -122,5 +123,20 @@ describe('alertasViagem', () => {
 describe('somarValores', () => {
   it('soma só os valores válidos', () => {
     expect(somarValores(['45,90', '1.000,10', '', 'x'])).toBeCloseTo(1046)
+  })
+})
+
+describe('calcularDiarias', () => {
+  it('conta o dia da ida e o da volta', () => {
+    expect(calcularDiarias('2026-10-05', '2026-10-07')).toBe(3)
+    expect(calcularDiarias('2026-10-05', '2026-10-05')).toBe(1)
+  })
+  it('atravessa mês e horário de verão sem errar', () => {
+    expect(calcularDiarias('2026-09-30', '2026-10-01')).toBe(2)
+    expect(calcularDiarias('2026-10-31', '2026-11-03')).toBe(4)
+  })
+  it('devolve 0 sem data ou com fim antes do início', () => {
+    expect(calcularDiarias('', '2026-10-05')).toBe(0)
+    expect(calcularDiarias('2026-10-07', '2026-10-05')).toBe(0)
   })
 })

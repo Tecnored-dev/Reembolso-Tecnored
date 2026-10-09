@@ -129,3 +129,14 @@ export function somarValores(valores: string[]): number {
     return Number.isNaN(n) ? t : t + n
   }, 0)
 }
+
+/**
+ * Adiantamento: dias corridos contando o dia da ida e o da volta (mesma conta
+ * da API). 0 se faltar data ou se o fim vier antes do início.
+ */
+export function calcularDiarias(inicio: string, fim: string): number {
+  if (!inicio || !fim) return 0
+  const dia = (iso: string) => Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10))
+  const dias = Math.round((dia(fim) - dia(inicio)) / 86_400_000) + 1
+  return dias > 0 ? dias : 0
+}

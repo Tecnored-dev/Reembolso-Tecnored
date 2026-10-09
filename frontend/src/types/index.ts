@@ -41,8 +41,26 @@ export type Status =
   | 'pago'
   | 'devolvido'
   | 'cancelado'
+  // Só do adiantamento de viagem (depois do pagamento das diárias)
+  | 'aguardando_prestacao'
+  | 'prestacao_em_conferencia'
+  | 'prestacao_devolvida'
+  | 'aguardando_devolucao'
+  | 'devolucao_em_conferencia'
+  | 'diferenca_aguardando_gestor'
+  | 'diferenca_aguardando_pagamento'
+  | 'encerrado'
 
-export type Acao = 'conferir' | 'devolver' | 'aprovar' | 'pagar' | 'reenviar'
+export type Acao =
+  | 'conferir'
+  | 'devolver'
+  | 'aprovar'
+  | 'pagar'
+  | 'reenviar'
+  | 'prestar_contas'
+  | 'enviar_comprovante'
+  | 'confirmar_devolucao'
+  | 'recusar_comprovante'
 
 export interface Opcao {
   id: number
@@ -65,11 +83,15 @@ export interface Cadastros {
   limite_refeicao_dia: string
   limite_solicitacao: string
   categorias_viagem: { id: CategoriaViagem; rotulo: string }[]
+  /** Adiantamento: valor de uma diária e máximo de diárias por pedido */
+  valor_diaria: string
+  max_diarias: number
 }
 
-export type TipoSolicitacao = 'alimentacao' | 'viagem'
+export type TipoSolicitacao = 'alimentacao' | 'viagem' | 'adiantamento'
 
-export type CategoriaViagem = 'refeicao' | 'hospedagem' | 'transporte' | 'lavanderia' | 'outros'
+/** Chave do tipo de despesa de viagem (a lista vem de GET /api/cadastros). */
+export type CategoriaViagem = string
 
 export interface Gestor {
   email: string
@@ -88,7 +110,7 @@ export interface SolicitacaoResumo {
   solicitante_email: string
   gestor_nome: string | null
   descricao: string
-  /** Só em viagem */
+  /** Só em viagem e adiantamento */
   destino: string | null
   valor_total: string
   moeda: string
@@ -126,6 +148,23 @@ export interface Solicitacao extends SolicitacaoResumo {
   pula_gestor: boolean
   viagem_inicio: string | null
   viagem_fim: string | null
+  /** Só no adiantamento: o valor adiantado é `valor_total` */
+  diarias: number | null
+  /** Diária complementar (quem recebe auxílio refeição): o valor foi informado */
+  diaria_complementar: boolean
+  /** Data limite da prestação de contas (60 dias depois da volta) */
+  prazo_prestacao: string | null
+  valor_diaria: string | null
+  /** Soma das notas da prestação de contas */
+  valor_gasto: string | null
+  /** Adiantado − gasto: positivo = sobra a devolver; negativo = diferença a receber */
+  saldo: string | null
+  prestacao_enviada_em: string | null
+  prestacao_conferida_por: string | null
+  devolucao_confirmada_por: string | null
+  diferenca_aprovada_por: string | null
+  data_pagamento_diferenca: string | null
+  encerrado_em: string | null
   conferido_por: string | null
   conferido_em: string | null
   aprovado_por: string | null

@@ -265,15 +265,13 @@ def test_expiracao_lembrete_e_cancelamento(cenario, db, settings):
     registro = db.get(Solicitacao, sol["id"])
     devolvida_em = registro.ultima_movimentacao_em
 
-    assert processar_expiracoes(db, settings, devolvida_em + timedelta(days=4)) == {
-        "lembretes": 0,
-        "cancelamentos": 0,
-    }
-    assert processar_expiracoes(db, settings, devolvida_em + timedelta(days=5))["lembretes"] == 1
+    resultado = processar_expiracoes(db, settings, devolvida_em + timedelta(days=12))
+    assert resultado["lembretes"] == 0 and resultado["cancelamentos"] == 0
+    assert processar_expiracoes(db, settings, devolvida_em + timedelta(days=13))["lembretes"] == 1
     # idempotente: não lembra de novo
-    assert processar_expiracoes(db, settings, devolvida_em + timedelta(days=6))["lembretes"] == 0
+    assert processar_expiracoes(db, settings, devolvida_em + timedelta(days=14))["lembretes"] == 0
     assert (
-        processar_expiracoes(db, settings, devolvida_em + timedelta(days=7))["cancelamentos"] == 1
+        processar_expiracoes(db, settings, devolvida_em + timedelta(days=15))["cancelamentos"] == 1
     )
     db.refresh(registro)
     assert registro.status == "cancelado"
@@ -284,7 +282,12 @@ def test_tarefa_de_expiracao_so_admin(cenario):
     entrar(cenario, COLAB)
     assert cenario.post("/api/tarefas/expiracao").status_code == 403
     entrar(cenario, "admin@tecnored.com.br", "admin")
-    assert cenario.post("/api/tarefas/expiracao").json() == {"lembretes": 0, "cancelamentos": 0}
+    assert cenario.post("/api/tarefas/expiracao").json() == {
+        "lembretes": 0,
+        "cancelamentos": 0,
+        "lembretes_prestacao": 0,
+        "prestacoes_vencidas": 0,
+    }
 
 
 def test_cadastros_e_perfil(cenario):

@@ -36,3 +36,36 @@
   background: #f3f4f6;
   color: #4b5563;
 }
+
+/* Adiantamento: mesmas cores das etapas equivalentes */
+.prestacao_em_conferencia,
+.devolucao_em_conferencia {
+  background: #e0e7ff;
+  color: #3730a3;
+}
+
+.diferenca_aguardando_gestor {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.diferenca_aguardando_pagamento {
+  background: #cffafe;
+  color: #155e75;
+}
+
+.aguardando_prestacao,
+.aguardando_devolucao {
+  background: #fce7f3;
+  color: #9d174d;
+}
+
+.prestacao_devolvida {
+  background: #ffedd5;
+  color: #9a3412;
+}
+
+.encerrado {
+  background: #dcfce7;
+  color: #166534;
+}

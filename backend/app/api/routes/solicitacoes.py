@@ -1,4 +1,4 @@
-"""Solicitações de reembolso: criar, listar, ver, decidir, pagar, reenviar."""
+"""Solicitações: criar, listar, ver, decidir, pagar, reenviar e prestar contas."""
 
 from __future__ import annotations
 
@@ -13,7 +13,14 @@ from sqlalchemy.orm import Session
 from app.auth.deps import exigir_papel, usuario_atual
 from app.auth.papeis import ADMIN
 from app.auth.sessoes import Usuario
-from app.config import ARQUIVO_TAMANHO_MAX, CATEGORIAS_VIAGEM, Settings, get_settings
+from app.config import (
+    ARQUIVO_TAMANHO_MAX,
+    CATEGORIAS_ANTIGAS,
+    CATEGORIAS_VIAGEM,
+    VALOR_DIARIA,
+    Settings,
+    get_settings,
+)
 from app.db import get_db
 from app.models.solicitacao import Solicitacao
 from app.services import arquivos as servico_arquivos
@@ -48,6 +55,34 @@ class NotaViagem(BaseModel):
 _NOTAS = TypeAdapter(list[NotaViagem])
 
 
+class PedidoAdiantamento(BaseModel):
+    # Texto vazio vira "" para a mensagem do fluxo (em português) aparecer.
+    destino: str = Field(default="", max_length=200)
+    viagem_inicio: date
+    viagem_fim: date
+    descricao: str = Field(default="", max_length=500)
+    empresa_id: int
+    gestor_email: str | None = Field(default=None, max_length=254)
+    # Diária complementar (quem recebe auxílio refeição): valor total, ex. "250,00".
+    # Vazio ou ausente = diárias normais.
+    diaria_complementar: str | None = Field(default=None, max_length=20)
+
+    def dados(self) -> fluxo.DadosAdiantamento:
+        complementar = (self.diaria_complementar or "").strip()
+        return fluxo.DadosAdiantamento(
+            complementar=ler_valor(complementar) if complementar else None,
+            destino=self.destino,
+            inicio=self.viagem_inicio,
+            fim=self.viagem_fim,
+            descricao=self.descricao,
+            empresa_id=self.empresa_id,
+            gestor_email=(self.gestor_email or "").strip().lower() or None,
+        )
+
+
+_ROTULO_COMPROVANTE = "Comprovante da devolução"
+
+
 # ---------------------------------------------------------------------------
 # Serialização
 # ---------------------------------------------------------------------------
@@ -73,6 +108,7 @@ def _resumo(sol: Solicitacao) -> dict:
 
 
 def _completo(sol: Solicitacao, usuario: Usuario) -> dict:
+    saldo = fluxo.saldo(sol)
     return {
         **_resumo(sol),
         "matricula": sol.matricula,
@@ -82,6 +118,18 @@ def _completo(sol: Solicitacao, usuario: Usuario) -> dict:
         "pula_gestor": sol.pula_gestor,
         "viagem_inicio": _iso(sol.viagem_inicio),
         "viagem_fim": _iso(sol.viagem_fim),
+        "diarias": sol.diarias,
+        "diaria_complementar": bool(sol.diaria_complementar),
+        "prazo_prestacao": _iso(fluxo.prazo_prestacao(sol)),
+        "valor_diaria": str(VALOR_DIARIA) if sol.tipo == fluxo.TIPO_ADIANTAMENTO else None,
+        "valor_gasto": None if sol.valor_gasto is None else str(sol.valor_gasto),
+        "saldo": None if saldo is None else str(saldo),
+        "prestacao_enviada_em": _iso(sol.prestacao_enviada_em),
+        "prestacao_conferida_por": sol.prestacao_conferida_por,
+        "devolucao_confirmada_por": sol.devolucao_confirmada_por,
+        "diferenca_aprovada_por": sol.diferenca_aprovada_por,
+        "data_pagamento_diferenca": _iso(sol.data_pagamento_diferenca),
+        "encerrado_em": _iso(sol.encerrado_em),
         "conferido_por": sol.conferido_por,
         "conferido_em": _iso(sol.conferido_em),
         "aprovado_por": sol.aprovado_por,
@@ -95,7 +143,14 @@ def _completo(sol: Solicitacao, usuario: Usuario) -> dict:
             {
                 "id": d.id,
                 "categoria": d.categoria,
-                "categoria_rotulo": CATEGORIAS_VIAGEM.get(d.categoria, "Refeição"),
+                "categoria_rotulo": (
+                    _ROTULO_COMPROVANTE
+                    if d.categoria == fluxo.COMPROVANTE_DEVOLUCAO
+                    else "Refeição"
+                    if sol.tipo == fluxo.TIPO_ALIMENTACAO
+                    else CATEGORIAS_VIAGEM.get(d.categoria)
+                    or CATEGORIAS_ANTIGAS.get(d.categoria, d.categoria)
+                ),
                 "data_despesa": d.data_despesa.isoformat(),
                 "valor": str(d.valor),
                 "descricao": d.descricao,
@@ -165,11 +220,24 @@ def _dados_viagem(
     gestor_email: str | None,
     despesas: str,
 ) -> fluxo.DadosViagem:
+    itens = _itens(despesas)
+    inicio, fim = _datas(viagem_inicio, viagem_fim)
+    return fluxo.DadosViagem(
+        destino=destino,
+        inicio=inicio,
+        fim=fim,
+        descricao=descricao,
+        empresa_id=empresa_id,
+        gestor_email=(gestor_email or "").strip().lower() or None,
+        itens=itens,
+    )
+
+
+def _itens(despesas: str) -> tuple[fluxo.ItemViagem, ...]:
     try:
         notas = _NOTAS.validate_python(json.loads(despesas or "[]"))
     except (ValueError, ValidationError):
         raise RegraNegocio("Lista de notas inválida.") from None
-    inicio, fim = _datas(viagem_inicio, viagem_fim)
     itens = []
     for n, nota in enumerate(notas, start=1):
         try:
@@ -186,15 +254,7 @@ def _dados_viagem(
                 id=nota.id,
             )
         )
-    return fluxo.DadosViagem(
-        destino=destino,
-        inicio=inicio,
-        fim=fim,
-        descricao=descricao,
-        empresa_id=empresa_id,
-        gestor_email=(gestor_email or "").strip().lower() or None,
-        itens=tuple(itens),
-    )
+    return tuple(itens)
 
 
 async def _arquivos(uploads: list[UploadFile] | None) -> list[servico_arquivos.ArquivoValidado]:
@@ -265,6 +325,17 @@ async def criar_viagem(
     )
     validados = await _arquivos(arquivos)
     sol = fluxo.criar_viagem(db, settings, armazenamento, usuario, dados, validados)
+    return _completo(sol, usuario)
+
+
+@router.post("/adiantamento", status_code=201)
+def criar_adiantamento(
+    pedido: PedidoAdiantamento,
+    usuario: Usuario = Depends(usuario_atual),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
+    sol = fluxo.criar_adiantamento(db, settings, usuario, pedido.dados())
     return _completo(sol, usuario)
 
 
@@ -380,6 +451,69 @@ async def reenviar_viagem(
     )
     validados = await _arquivos(arquivos)
     sol = fluxo.reenviar_viagem(db, settings, armazenamento, usuario, sol_id, dados, validados)
+    return _completo(sol, usuario)
+
+
+@router.post("/{sol_id}/reenviar-adiantamento")
+def reenviar_adiantamento(
+    sol_id: int,
+    pedido: PedidoAdiantamento,
+    usuario: Usuario = Depends(usuario_atual),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
+    sol = fluxo.reenviar_adiantamento(db, settings, usuario, sol_id, pedido.dados())
+    return _completo(sol, usuario)
+
+
+@router.post("/{sol_id}/prestacao")
+async def prestar_contas(
+    sol_id: int,
+    despesas: str = Form(...),
+    arquivos: list[UploadFile] = File([]),
+    usuario: Usuario = Depends(usuario_atual),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+    armazenamento: Armazenamento = Depends(get_armazenamento),
+):
+    itens = _itens(despesas)
+    validados = await _arquivos(arquivos)
+    sol = fluxo.enviar_prestacao(db, settings, armazenamento, usuario, sol_id, itens, validados)
+    return _completo(sol, usuario)
+
+
+@router.post("/{sol_id}/comprovante")
+async def enviar_comprovante(
+    sol_id: int,
+    data_transferencia: str = Form(...),
+    arquivo: UploadFile | None = File(None),
+    usuario: Usuario = Depends(usuario_atual),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+    armazenamento: Armazenamento = Depends(get_armazenamento),
+):
+    try:
+        data = date.fromisoformat(data_transferencia)
+    except ValueError:
+        raise RegraNegocio("Data da transferência inválida.") from None
+    validado = await _arquivo(arquivo)
+    if validado is None:
+        raise RegraNegocio("Anexe o comprovante da transferência.")
+    sol = fluxo.enviar_comprovante(db, settings, armazenamento, usuario, sol_id, data, validado)
+    return _completo(sol, usuario)
+
+
+@router.post("/{sol_id}/confirmar-devolucao")
+def confirmar_devolucao(
+    sol_id: int,
+    decisao: Decisao,
+    usuario: Usuario = Depends(usuario_atual),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
+    sol = fluxo.confirmar_devolucao(
+        db, settings, usuario, sol_id, decisao.aprovar, decisao.comentario
+    )
     return _completo(sol, usuario)
 
 

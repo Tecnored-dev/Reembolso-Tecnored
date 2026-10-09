@@ -8,6 +8,14 @@ const CURTO: Record<Status, string> = {
   pago: 'Paga',
   devolvido: 'Devolvida',
   cancelado: 'Cancelada',
+  aguardando_prestacao: 'Prestar contas',
+  prestacao_em_conferencia: 'Prestação em conferência',
+  prestacao_devolvida: 'Prestação devolvida',
+  aguardando_devolucao: 'Devolver sobra',
+  devolucao_em_conferencia: 'Devolução enviada',
+  diferenca_aguardando_gestor: 'Diferença com o gestor',
+  diferenca_aguardando_pagamento: 'Diferença a pagar',
+  encerrado: 'Encerrada',
 }
 
 export default function StatusBadge({ status, titulo }: { status: Status; titulo?: string }) {
