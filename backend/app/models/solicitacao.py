@@ -1,8 +1,9 @@
 """Solicitação de reembolso, despesas (notas), histórico e caixa de saída de e-mails.
 
-Uma `Solicitacao` serve para todos os tipos (hoje só "alimentacao"; viagem
-entra depois). Dados do solicitante que podem mudar com o tempo (matrícula,
-centro de custo, empresa) são COPIADOS no envio, para o histórico não mudar
+Uma `Solicitacao` serve para todos os tipos: "alimentacao" (uma nota) e
+"viagem" (reembolso de viagem, várias notas). O adiantamento entra depois.
+Dados do solicitante que podem mudar com o tempo (matrícula, centro de custo,
+empresa) são COPIADOS no envio, para o histórico não mudar
 se a pessoa trocar de área.
 """
 
@@ -49,6 +50,10 @@ class Solicitacao(Base):
     pula_gestor: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     descricao: Mapped[str] = mapped_column(Text, nullable=False)
+    # Só em viagem: para onde e quando foi (a justificativa fica em `descricao`).
+    destino: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    viagem_inicio: Mapped[date | None] = mapped_column(Date, nullable=True)
+    viagem_fim: Mapped[date | None] = mapped_column(Date, nullable=True)
     moeda: Mapped[str] = mapped_column(String(3), nullable=False, default="BRL")
     valor_total: Mapped[Decimal] = mapped_column(DINHEIRO, nullable=False)
     alerta_limite: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -92,7 +97,7 @@ class Solicitacao(Base):
 
 
 class Despesa(Base):
-    """Uma nota fiscal. Alimentação tem exatamente uma."""
+    """Uma nota fiscal. Alimentação tem exatamente uma; viagem, uma ou mais."""
 
     __tablename__ = "despesas"
 
@@ -103,6 +108,7 @@ class Despesa(Base):
     categoria: Mapped[str] = mapped_column(String(40), nullable=False)
     data_despesa: Mapped[date] = mapped_column(Date, nullable=False)
     valor: Mapped[Decimal] = mapped_column(DINHEIRO, nullable=False)
+    descricao: Mapped[str | None] = mapped_column(String(200), nullable=True)
     # Chave no armazenamento de arquivos (app/storage), nunca o arquivo em si.
     arquivo_chave: Mapped[str] = mapped_column(String(300), nullable=False)
     arquivo_nome: Mapped[str] = mapped_column(String(255), nullable=False)

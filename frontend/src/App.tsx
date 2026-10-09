@@ -5,6 +5,7 @@ import DetalhePage from '@/pages/DetalhePage'
 import ListaPage from '@/pages/ListaPage'
 import NotFoundPage from '@/pages/NotFoundPage'
 import PerfilPage from '@/pages/PerfilPage'
+import ViagemFormPage from '@/pages/ViagemFormPage'
 import WelcomePage from '@/pages/WelcomePage'
 
 function App() {
@@ -73,8 +74,10 @@ function App() {
           }
         />
         <Route path="/nova" element={<AlimentacaoFormPage />} />
+        <Route path="/nova/viagem" element={<ViagemFormPage />} />
         <Route path="/solicitacoes/:id" element={<DetalhePage />} />
         <Route path="/solicitacoes/:id/corrigir" element={<AlimentacaoFormPage />} />
+        <Route path="/solicitacoes/:id/corrigir-viagem" element={<ViagemFormPage />} />
         <Route path="/perfil" element={<PerfilPage />} />
       </Route>
       <Route path="*" element={<NotFoundPage />} />

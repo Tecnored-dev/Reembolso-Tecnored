@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  alertasViagem,
   caminhoInterno,
   formatarData,
   formatarMoeda,
@@ -7,6 +8,7 @@ import {
   lerValor,
   mensagemErro,
   rotuloPapel,
+  somarValores,
 } from '@/utils'
 import type { AppConfig } from '@/types'
 
@@ -80,5 +82,45 @@ describe('caminhoInterno', () => {
     for (const ruim of [null, '', 'nova', 'https://mal.com', '//mal.com', '/\\mal.com', '/\\/mal.com', '\\\\mal.com']) {
       expect(caminhoInterno(ruim)).toBe('/inicio')
     }
+  })
+})
+
+describe('alertasViagem', () => {
+  const nota = (categoria: string, data: string, valor: string) => ({ categoria, data, valor })
+
+  it('soma as refeições do mesmo dia', () => {
+    const alertas = alertasViagem(
+      [nota('refeicao', '2026-10-05', '80,00'), nota('refeicao', '2026-10-05', '70,00')],
+      135,
+      5000
+    )
+    expect(alertas).toHaveLength(1)
+    expect(alertas[0]).toContain('05/10')
+  })
+  it('não alerta refeições em dias diferentes nem outras categorias', () => {
+    const alertas = alertasViagem(
+      [
+        nota('refeicao', '2026-10-05', '80,00'),
+        nota('refeicao', '2026-10-06', '70,00'),
+        nota('hospedagem', '2026-10-05', '400,00'),
+      ],
+      135,
+      5000
+    )
+    expect(alertas).toEqual([])
+  })
+  it('alerta o total acima do limite e ignora valor inválido', () => {
+    const alertas = alertasViagem(
+      [nota('hospedagem', '2026-10-05', '3.000,00'), nota('transporte', '2026-10-05', '2500'), nota('outros', '', 'abc')],
+      135,
+      5000
+    )
+    expect(alertas).toEqual([expect.stringContaining('Total acima')])
+  })
+})
+
+describe('somarValores', () => {
+  it('soma só os valores válidos', () => {
+    expect(somarValores(['45,90', '1.000,10', '', 'x'])).toBeCloseTo(1046)
   })
 })

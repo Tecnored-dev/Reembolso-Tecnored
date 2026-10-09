@@ -63,7 +63,13 @@ export interface Cadastros {
   centros_custo: Opcao[]
   empresas: { id: number; nome: string }[]
   limite_refeicao_dia: string
+  limite_solicitacao: string
+  categorias_viagem: { id: CategoriaViagem; rotulo: string }[]
 }
+
+export type TipoSolicitacao = 'alimentacao' | 'viagem'
+
+export type CategoriaViagem = 'refeicao' | 'hospedagem' | 'transporte' | 'lavanderia' | 'outros'
 
 export interface Gestor {
   email: string
@@ -74,13 +80,16 @@ export interface Gestor {
 export interface SolicitacaoResumo {
   id: number
   codigo: string
-  tipo: string
+  tipo: TipoSolicitacao
+  tipo_rotulo: string
   status: Status
   status_rotulo: string
   solicitante_nome: string
   solicitante_email: string
   gestor_nome: string | null
   descricao: string
+  /** Só em viagem */
+  destino: string | null
   valor_total: string
   moeda: string
   alerta_limite: string | null
@@ -91,8 +100,10 @@ export interface SolicitacaoResumo {
 export interface Despesa {
   id: number
   categoria: string
+  categoria_rotulo: string
   data_despesa: string
   valor: string
+  descricao: string | null
   arquivo_nome: string
   arquivo_tipo: string
 }
@@ -113,6 +124,8 @@ export interface Solicitacao extends SolicitacaoResumo {
   empresa: string
   gestor_email: string | null
   pula_gestor: boolean
+  viagem_inicio: string | null
+  viagem_fim: string | null
   conferido_por: string | null
   conferido_em: string | null
   aprovado_por: string | null

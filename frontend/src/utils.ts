@@ -80,3 +80,52 @@ export function caminhoInterno(pedido: string | null, padrao = '/inicio'): strin
   if (pedido.startsWith('//') || pedido.includes('\\')) return padrao
   return pedido
 }
+
+export interface NotaParaAlerta {
+  categoria: string
+  data: string
+  valor: string
+}
+
+/**
+ * Mesmos alertas que a API grava no reembolso de viagem (só avisam, não
+ * bloqueiam): refeição acima do limite diário somando as notas do mesmo dia,
+ * e total acima do limite por solicitação.
+ */
+export function alertasViagem(
+  notas: NotaParaAlerta[],
+  limiteDia: number,
+  limiteTotal: number
+): string[] {
+  const porDia = new Map<string, number>()
+  let total = 0
+  for (const n of notas) {
+    const valor = lerValor(n.valor)
+    if (Number.isNaN(valor)) continue
+    total += valor
+    if (n.categoria === 'refeicao' && n.data)
+      porDia.set(n.data, (porDia.get(n.data) ?? 0) + valor)
+  }
+  const alertas: string[] = []
+  const dias = [...porDia.entries()]
+    .filter(([, v]) => limiteDia > 0 && v > limiteDia)
+    .map(([d]) => d)
+    .sort()
+  if (dias.length)
+    alertas.push(
+      `Refeição acima do limite diário da política (${formatarMoeda(limiteDia)}) em ${dias
+        .map((d) => formatarData(d).slice(0, 5))
+        .join(', ')}.`
+    )
+  if (limiteTotal > 0 && total > limiteTotal)
+    alertas.push(`Total acima do limite por solicitação (${formatarMoeda(limiteTotal)}).`)
+  return alertas
+}
+
+/** Soma dos valores válidos, para mostrar o total enquanto o formulário é preenchido. */
+export function somarValores(valores: string[]): number {
+  return valores.reduce((t, v) => {
+    const n = lerValor(v)
+    return Number.isNaN(n) ? t : t + n
+  }, 0)
+}
