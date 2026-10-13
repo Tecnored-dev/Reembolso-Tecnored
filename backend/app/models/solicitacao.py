@@ -59,6 +59,10 @@ class Solicitacao(Base):
     pula_gestor: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     descricao: Mapped[str] = mapped_column(Text, nullable=False)
+    # Alimentação e despesas diversas: motivo (lista do ARGO) e, só na
+    # alimentação, onde foi a refeição (define o limite do alerta).
+    motivo: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    local_refeicao: Mapped[str | None] = mapped_column(String(20), nullable=True)
     # Só em viagem: para onde e quando foi (a justificativa fica em `descricao`).
     destino: Mapped[str | None] = mapped_column(String(200), nullable=True)
     viagem_inicio: Mapped[date | None] = mapped_column(Date, nullable=True)

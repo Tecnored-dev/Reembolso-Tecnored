@@ -21,6 +21,33 @@ SESSION_DURATION_HOURS = 8
 
 # Regras de negócio (decididas com a Thais — ver docs do projeto)
 LIMITE_REFEICAO_DIA = Decimal("135.00")  # política: só ALERTA, não bloqueia
+
+# Motivo da despesa (alimentação e despesas diversas): obrigatório, com a mesma
+# lista do ARGO (Thais, 09/10: "manter o motivo e a descrição obrigatórios").
+MOTIVOS = [
+    "Despesas cartório",
+    "Despesas correio",
+    "Evento corporativo",
+    "Inspeção de equipamentos",
+    "Outros",
+    "Processo admissão",
+    "Reunião comercial",
+    "Reunião corporativa",
+    "Reunião de kick-off",
+    "Trabalho externo",
+    "Treinamento",
+    "Visita técnica",
+    "Workshop",
+]
+
+# Onde foi a refeição (só alimentação): define o limite do alerta. Pinda R$ 40 e
+# Marabá R$ 45 valem para colaboradores locais em deslocamento interno; quem
+# escolhe é o colaborador (Thais, 09/10). Fora disso vale o limite diário geral.
+LOCAIS_REFEICAO = {
+    "pinda": ("Pindamonhangaba (deslocamento local)", Decimal("40.00")),
+    "maraba": ("Marabá (deslocamento local)", Decimal("45.00")),
+    "outro": ("Outro local ou em viagem", LIMITE_REFEICAO_DIA),
+}
 # Devolvida e parada: a Thais pediu "uns 15 dias" (09/10). O lembrete continua
 # 2 dias antes do cancelamento, como era no prazo antigo (5º de 7 dias).
 DIAS_LEMBRETE_DEVOLVIDO = 13  # lembrete ao colaborador com solicitação devolvida parada

@@ -40,6 +40,8 @@ def alimentacao(cliente, quem=COLAB, papeis="", gestor=GESTOR, **benef):
         "data_despesa": HOJE.isoformat(),
         "valor": "40,00",
         "descricao": "Almoço na visita",
+        "motivo": "Visita técnica",
+        "local_refeicao": "outro",
         "empresa_id": "1",
         **{f"beneficiario_{k}": str(v) for k, v in benef.items()},
     }
@@ -127,6 +129,8 @@ def test_os_dois_veem_recebem_avisos_e_podem_corrigir(cenario, db):
             "data_despesa": HOJE.isoformat(),
             "valor": "38,00",
             "descricao": "Almoço na visita",
+            "motivo": "Visita técnica",
+            "local_refeicao": "outro",
             "empresa_id": "1",
             "gestor_email": GESTOR,
         },
