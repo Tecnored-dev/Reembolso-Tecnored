@@ -190,6 +190,8 @@ def _completo(sol: Solicitacao, usuario: Usuario) -> dict:
                     if d.categoria == fluxo.COMPROVANTE_DEVOLUCAO
                     else "Refeição"
                     if sol.tipo == fluxo.TIPO_ALIMENTACAO
+                    else "Despesas diversas"
+                    if sol.tipo == fluxo.TIPO_DIVERSAS
                     else CATEGORIAS_VIAGEM.get(d.categoria)
                     or CATEGORIAS_ANTIGAS.get(d.categoria, d.categoria)
                 ),
@@ -351,10 +353,56 @@ async def criar_alimentacao(
             beneficiario_centro_custo_id,
         ),
     )
+    return await _criar_uma_nota(
+        fluxo.TIPO_ALIMENTACAO, dados, arquivo, usuario, db, settings, armazenamento
+    )
+
+
+@router.post("/diversas", status_code=201)
+async def criar_diversas(
+    data_despesa: str = Form(...),
+    valor: str = Form(...),
+    descricao: str = Form(...),
+    empresa_id: int = Form(...),
+    gestor_email: str | None = Form(None),
+    beneficiario_email: str = Form(""),
+    beneficiario_nome: str = Form(""),
+    beneficiario_matricula: str = Form(""),
+    beneficiario_centro_custo_id: str = Form(""),
+    arquivo: UploadFile | None = File(None),
+    usuario: Usuario = Depends(usuario_atual),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+    armazenamento: Armazenamento = Depends(get_armazenamento),
+):
+    """Despesas diversas: mesmo formulário e fluxo da alimentação (corrige em /reenviar)."""
+    dados = replace(
+        _dados(data_despesa, valor, descricao, empresa_id, gestor_email),
+        beneficiario=_beneficiario_form(
+            beneficiario_email,
+            beneficiario_nome,
+            beneficiario_matricula,
+            beneficiario_centro_custo_id,
+        ),
+    )
+    return await _criar_uma_nota(
+        fluxo.TIPO_DIVERSAS, dados, arquivo, usuario, db, settings, armazenamento
+    )
+
+
+async def _criar_uma_nota(
+    tipo: str,
+    dados: fluxo.DadosAlimentacao,
+    arquivo: UploadFile | None,
+    usuario: Usuario,
+    db: Session,
+    settings: Settings,
+    armazenamento: Armazenamento,
+) -> dict:
     validado = await _arquivo(arquivo)
     if validado is None:
         raise RegraNegocio("Anexe a foto ou o PDF da nota.")
-    sol = fluxo.criar_alimentacao(db, settings, armazenamento, usuario, dados, validado)
+    sol = fluxo.criar_alimentacao(db, settings, armazenamento, usuario, dados, validado, tipo)
     return _completo(sol, usuario)
 
 

@@ -88,7 +88,10 @@ export interface Cadastros {
   max_diarias: number
 }
 
-export type TipoSolicitacao = 'alimentacao' | 'viagem' | 'adiantamento'
+export type TipoSolicitacao = 'alimentacao' | 'viagem' | 'adiantamento' | 'diversas'
+
+/** Tipos com uma nota só, no formulário simples. */
+export type TipoUmaNota = 'alimentacao' | 'diversas'
 
 /** Chave do tipo de despesa de viagem (a lista vem de GET /api/cadastros). */
 export type CategoriaViagem = string

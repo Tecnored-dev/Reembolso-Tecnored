@@ -75,7 +75,8 @@ function App() {
             />
           }
         />
-        <Route path="/nova" element={<AlimentacaoFormPage />} />
+        <Route path="/nova" element={<AlimentacaoFormPage key="alimentacao" />} />
+        <Route path="/nova/diversas" element={<AlimentacaoFormPage key="diversas" tipo="diversas" />} />
         <Route path="/nova/viagem" element={<ViagemFormPage />} />
         <Route path="/nova/adiantamento" element={<AdiantamentoFormPage />} />
         <Route path="/solicitacoes/:id" element={<DetalhePage />} />
