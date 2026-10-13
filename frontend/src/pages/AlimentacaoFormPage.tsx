@@ -11,16 +11,34 @@ import { useContexto } from '@/components/contexto'
 import { useApi } from '@/hooks/useApi'
 import { api } from '@/services/api'
 import ui from '@/styles/ui.module.css'
-import type { Cadastros, Gestor, Solicitacao } from '@/types'
+import type { Cadastros, Gestor, Solicitacao, TipoUmaNota } from '@/types'
 import { formatarMoeda, hojeISO, lerValor, mensagemErro } from '@/utils'
 import styles from './AlimentacaoFormPage.module.css'
 
 const ACEITOS = 'image/jpeg,image/png,application/pdf'
 
-// Novo reembolso de alimentação, ou correção de um devolvido (/solicitacoes/:id/corrigir).
-// Uma nota por solicitação. O gestor só é pedido de quem não é gestor
+// Novo reembolso de alimentação ou de despesas diversas (mesmo formulário e
+// fluxo), ou correção de um devolvido (/solicitacoes/:id/corrigir, vale para os
+// dois). Uma nota por solicitação. O gestor só é pedido de quem não é gestor
 // (gestor pedindo pula a aprovação de gestor).
-export default function AlimentacaoFormPage() {
+interface Props {
+  tipo?: TipoUmaNota
+}
+
+const TEXTO: Record<TipoUmaNota, { titulo: string; exemplo: string; voltar: string }> = {
+  alimentacao: {
+    titulo: 'Novo reembolso de alimentação',
+    exemplo: 'Ex.: Almoço com cliente na visita técnica',
+    voltar: '/nova',
+  },
+  diversas: {
+    titulo: 'Novo reembolso de despesas diversas',
+    exemplo: 'Ex.: Carregador de notebook para a visita técnica',
+    voltar: '/nova/diversas',
+  },
+}
+
+export default function AlimentacaoFormPage({ tipo: tipoPedido = 'alimentacao' }: Props) {
   const { id } = useParams()
   const corrigindo = Boolean(id)
   const { tem, perfil } = useContexto()
@@ -88,7 +106,11 @@ export default function AlimentacaoFormPage() {
 
   const limite = Number(cadastros?.limite_refeicao_dia ?? 0)
   const numero = useMemo(() => lerValor(valor), [valor])
-  const acimaDoLimite = limite > 0 && numero > limite
+  // Na correção, o tipo é o do pedido devolvido.
+  const tipo: TipoUmaNota = original?.tipo === 'diversas' ? 'diversas' : tipoPedido
+  const texto = TEXTO[tipo]
+  // O limite diário de refeição só vale para alimentação.
+  const acimaDoLimite = tipo === 'alimentacao' && limite > 0 && numero > limite
 
   async function enviar(e: FormEvent) {
     e.preventDefault()
@@ -110,7 +132,9 @@ export default function AlimentacaoFormPage() {
 
     setEnviando(true)
     try {
-      const url = corrigindo ? `/api/solicitacoes/${id}/reenviar` : '/api/solicitacoes/alimentacao'
+      const url = corrigindo
+        ? `/api/solicitacoes/${id}/reenviar`
+        : `/api/solicitacoes/${tipo === 'diversas' ? 'diversas' : 'alimentacao'}`
       // multipart explícito: sem isso o axios converteria o FormData em JSON.
       const res = await api.post<Solicitacao>(url, form, {
         headers: { 'Content-Type': 'multipart/form-data' },
@@ -123,7 +147,7 @@ export default function AlimentacaoFormPage() {
     }
   }
 
-  if (!perfil.completo) return <Navigate to="/perfil?voltar=/nova" replace />
+  if (!perfil.completo) return <Navigate to={`/perfil?voltar=${TEXTO[tipoPedido].voltar}`} replace />
 
   if (corrigindo && original && !original.acoes.includes('reenviar')) {
     return (
@@ -138,7 +162,7 @@ export default function AlimentacaoFormPage() {
       <div className={ui.cabecalho}>
         <div>
           <h1 className={ui.titulo}>
-            {corrigindo ? `Corrigir ${original?.codigo ?? ''}` : 'Novo reembolso de alimentação'}
+            {corrigindo ? `Corrigir ${original?.codigo ?? ''}` : texto.titulo}
           </h1>
           <p className={ui.muted}>
             {benef.ativo && benef.email.trim()
@@ -147,6 +171,13 @@ export default function AlimentacaoFormPage() {
           </p>
         </div>
       </div>
+
+      {tipo === 'diversas' && !corrigindo && (
+        <div className={ui.info} style={{ marginBottom: 16 }}>
+          Para despesas que não são alimentação, viagem nem adiantamento — por exemplo, um
+          carregador ou créditos de celular.
+        </div>
+      )}
 
       {original?.motivo_devolucao && (
         <div className={ui.aviso} style={{ marginBottom: 16 }}>
@@ -193,7 +224,7 @@ export default function AlimentacaoFormPage() {
             id="descricao"
             value={descricao}
             maxLength={500}
-            placeholder="Ex.: Almoço com cliente na visita técnica"
+            placeholder={texto.exemplo}
             onChange={(e) => setDescricao(e.target.value)}
             required
           />

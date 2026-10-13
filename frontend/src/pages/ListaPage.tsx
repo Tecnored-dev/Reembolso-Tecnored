@@ -41,6 +41,9 @@ export default function ListaPage({ escopo, titulo, descricao, vazio }: Props) {
             <Link to="/nova/adiantamento" className={ui.botao}>
               + Adiantamento de viagem
             </Link>
+            <Link to="/nova/diversas" className={ui.botao}>
+              + Despesas diversas
+            </Link>
           </div>
         )}
       </div>

@@ -82,13 +82,20 @@ from app.storage import Armazenamento
 log = logging.getLogger(__name__)
 
 TIPO_ALIMENTACAO = "alimentacao"
+# Despesas diversas (Nirlene, 13/10): tudo que não é alimentação, viagem nem
+# adiantamento (ex.: carregador, créditos de celular). Mesmo fluxo da alimentação.
+TIPO_DIVERSAS = "diversas"
 TIPO_VIAGEM = "viagem"
 TIPO_ADIANTAMENTO = "adiantamento"
 ROTULO_TIPO = {
     TIPO_ALIMENTACAO: "Alimentação",
+    TIPO_DIVERSAS: "Despesas diversas",
     TIPO_VIAGEM: "Viagem",
     TIPO_ADIANTAMENTO: "Adiantamento de viagem",
 }
+# Tipos com uma nota só, no formulário simples (data, valor, descrição, arquivo).
+TIPOS_UMA_NOTA = (TIPO_ALIMENTACAO, TIPO_DIVERSAS)
+CATEGORIA_UMA_NOTA = {TIPO_ALIMENTACAO: "refeicao", TIPO_DIVERSAS: "diversos"}
 # Despesa especial do adiantamento: o comprovante da transferência da sobra.
 COMPROVANTE_DEVOLUCAO = "comprovante_devolucao"
 
@@ -336,7 +343,11 @@ def criar_alimentacao(
     usuario: Usuario,
     dados: DadosAlimentacao,
     arquivo: arquivos.ArquivoValidado,
+    tipo: str = TIPO_ALIMENTACAO,
 ) -> Solicitacao:
+    """Alimentação ou despesas diversas: uma nota, mesmo fluxo."""
+    if tipo not in TIPOS_UMA_NOTA:
+        raise RegraNegocio("Tipo de solicitação inválido.")
     pessoa = _pessoa_do_pedido(db, settings, usuario, dados.beneficiario)
 
     agora = agora_utc()
@@ -352,7 +363,7 @@ def criar_alimentacao(
     empresa = _empresa(db, dados.empresa_id)
 
     sol = Solicitacao(
-        tipo=TIPO_ALIMENTACAO,
+        tipo=tipo,
         status=EM_CONFERENCIA,
         solicitante_email=pessoa.email,
         solicitante_nome=pessoa.nome,
@@ -366,7 +377,7 @@ def criar_alimentacao(
         pula_gestor=pula_gestor,
         descricao=dados.descricao.strip(),
         valor_total=dados.valor,
-        alerta_limite=_alerta(dados.valor),
+        alerta_limite=_alerta(dados.valor, tipo),
         enviado_em=agora,
         ultima_movimentacao_em=agora,
     )
@@ -376,7 +387,7 @@ def criar_alimentacao(
 
     chave = arquivos.salvar(armazenamento, arquivo, sol.codigo, agora)
     try:
-        sol.despesas.append(_despesa(dados, arquivo, chave, agora))
+        sol.despesas.append(_despesa(dados, arquivo, chave, agora, CATEGORIA_UMA_NOTA[tipo]))
         _registrar(db, sol, "enviado", None, EM_CONFERENCIA, usuario, None, agora)
         notificacoes.enfileirar(
             db,
@@ -384,7 +395,8 @@ def criar_alimentacao(
             sol,
             notificacoes.emails_financeiro(db),
             "Nova solicitação para conferir",
-            f"{_autor(usuario, sol)} enviou um reembolso de alimentação para conferência.",
+            f"{_autor(usuario, sol)} enviou um reembolso de "
+            f"{ROTULO_TIPO[tipo].lower()} para conferência.",
         )
         db.commit()
     except Exception:
@@ -406,8 +418,8 @@ def reenviar(
     sol = obter(db, usuario, sol_id)
     _exigir(eh_dono(sol, usuario), "Só quem pediu pode corrigir.")
     _exigir_status(sol, DEVOLVIDO)
-    if sol.tipo != TIPO_ALIMENTACAO:
-        raise RegraNegocio("Esta solicitação não é de alimentação.")
+    if sol.tipo not in TIPOS_UMA_NOTA:
+        raise RegraNegocio("Esta solicitação não é de alimentação (nem de despesas diversas).")
     _validar_basico(dados)
     if not sol.pula_gestor:
         gestor = _validar_gestor(
@@ -417,7 +429,7 @@ def reenviar(
     sol.empresa = _empresa(db, dados.empresa_id).nome
     sol.descricao = dados.descricao.strip()
     sol.valor_total = dados.valor
-    sol.alerta_limite = _alerta(dados.valor)
+    sol.alerta_limite = _alerta(dados.valor, sol.tipo)
 
     agora = agora_utc()
     despesa = sol.despesas[0]
@@ -1622,17 +1634,22 @@ def _empresa(db: Session, empresa_id: int) -> Empresa:
     return empresa
 
 
-def _alerta(valor: Decimal) -> str | None:
-    if valor > LIMITE_REFEICAO_DIA:
+def _alerta(valor: Decimal, tipo: str = TIPO_ALIMENTACAO) -> str | None:
+    """Limite diário de refeição: só vale para alimentação."""
+    if tipo == TIPO_ALIMENTACAO and valor > LIMITE_REFEICAO_DIA:
         return f"Acima do limite diário de refeição da política ({moeda(LIMITE_REFEICAO_DIA)})."
     return None
 
 
 def _despesa(
-    dados: DadosAlimentacao, arquivo: arquivos.ArquivoValidado, chave: str, agora: datetime
+    dados: DadosAlimentacao,
+    arquivo: arquivos.ArquivoValidado,
+    chave: str,
+    agora: datetime,
+    categoria: str = "refeicao",
 ) -> Despesa:
     return Despesa(
-        categoria="refeicao",
+        categoria=categoria,
         data_despesa=dados.data_despesa,
         valor=dados.valor,
         arquivo_chave=chave,
