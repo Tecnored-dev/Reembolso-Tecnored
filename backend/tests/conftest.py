@@ -35,7 +35,8 @@ def db():
             CentroCusto(codigo="3350", nome="T.I / T.A", ativo=True),
             CentroCusto(codigo="4110", nome="CONTROLADORIA", ativo=True),
             Empresa(nome="TECNORED", ativo=True),
-            Empresa(nome="TECNORED MARABA", ativo=True),
+            # Inativa desde a migração 0006 ("inicialmente só Tecnored", 13/10).
+            Empresa(nome="TECNORED MARABA", ativo=False),
         ]
     )
     session.commit()

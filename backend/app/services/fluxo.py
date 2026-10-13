@@ -47,6 +47,7 @@ lembrete antes e aviso quando vence (não bloqueia: o dinheiro já foi pago).
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -70,7 +71,7 @@ from app.config import (
     VALOR_DIARIA,
     Settings,
 )
-from app.models.cadastros import Empresa
+from app.models.cadastros import CentroCusto, Empresa
 from app.models.cadastros import Usuario as CadastroUsuario
 from app.models.solicitacao import Despesa, Historico, Solicitacao
 from app.services import arquivos, gestores, notificacoes
@@ -131,7 +132,35 @@ FILA_PAGAMENTO = (AGUARDANDO_PAGAMENTO, DIFERENCA_AGUARDANDO_PAGAMENTO)
 
 OUTRO_FINANCEIRO = "Outra pessoa do financeiro precisa conferir o seu próprio pedido."
 
+EMAIL_VALIDO = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
 SISTEMA = Usuario(email="sistema", nome="Sistema", papeis=(), via="sistema")
+
+
+@dataclass(frozen=True)
+class Beneficiario:
+    """Pedido em nome de outra pessoa (Thais, 13/10): qualquer colaborador pode
+    pedir; o dinheiro vai para o beneficiário e quem aprova é o gestor dele.
+    Matrícula, nome e centro de custo só são usados se o beneficiário ainda não
+    tiver o perfil completo no sistema (nunca entrou)."""
+
+    email: str
+    nome: str = ""
+    matricula: str = ""
+    centro_custo_id: int | None = None
+
+
+@dataclass(frozen=True)
+class _Pessoa:
+    """Quem recebe o reembolso (vira o "solicitante" da solicitação)."""
+
+    email: str
+    nome: str
+    matricula: str
+    centro_custo: str
+    eh_gestor: bool
+    criado_por_email: str | None = None
+    criado_por_nome: str | None = None
 
 
 @dataclass(frozen=True)
@@ -141,6 +170,7 @@ class DadosAlimentacao:
     descricao: str
     empresa_id: int
     gestor_email: str | None
+    beneficiario: Beneficiario | None = None
 
 
 @dataclass(frozen=True)
@@ -168,9 +198,10 @@ class DadosAdiantamento:
     descricao: str  # justificativa
     empresa_id: int
     gestor_email: str | None
-    # Diária complementar (quem recebe auxílio refeição): valor total informado
-    # pelo colaborador, no lugar das diárias normais. None = diárias normais.
+    # Diária complementar (quem recebe auxílio refeição): valor informado pelo
+    # colaborador, SOMADO às diárias normais (Thais, 13/10). None = sem complementar.
     complementar: Decimal | None = None
+    beneficiario: Beneficiario | None = None
 
 
 @dataclass(frozen=True)
@@ -182,14 +213,25 @@ class DadosViagem:
     empresa_id: int
     gestor_email: str | None
     itens: tuple[ItemViagem, ...]
+    beneficiario: Beneficiario | None = None
 
 
 # ---------------------------------------------------------------------------
 # Leitura e visibilidade
 # ---------------------------------------------------------------------------
+def eh_dono(sol: Solicitacao, usuario: Usuario) -> bool:
+    """Quem recebe o reembolso ou quem criou o pedido em nome dele."""
+    return usuario.email in (sol.solicitante_email, sol.criado_por_email)
+
+
+def interessados(sol: Solicitacao) -> list[str]:
+    """Quem recebe os avisos do colaborador: o beneficiário e quem criou o pedido."""
+    return [e for e in (sol.solicitante_email, sol.criado_por_email) if e]
+
+
 def pode_ver(sol: Solicitacao, usuario: Usuario) -> bool:
     return (
-        sol.solicitante_email == usuario.email
+        eh_dono(sol, usuario)
         or sol.gestor_email == usuario.email
         or usuario.tem(FINANCEIRO)
         or usuario.tem(ADMIN)
@@ -209,7 +251,12 @@ ESCOPOS = ("minhas", "conferencia", "aprovacao", "pagamento", "todas")
 def listar(db: Session, usuario: Usuario, escopo: str) -> list[Solicitacao]:
     consulta = select(Solicitacao).order_by(Solicitacao.ultima_movimentacao_em.desc())
     if escopo == "minhas":
-        consulta = consulta.where(Solicitacao.solicitante_email == usuario.email)
+        consulta = consulta.where(
+            or_(
+                Solicitacao.solicitante_email == usuario.email,
+                Solicitacao.criado_por_email == usuario.email,
+            )
+        )
     elif escopo == "conferencia":
         _exigir(usuario.tem(FINANCEIRO), "Só o financeiro confere.")
         consulta = consulta.where(Solicitacao.status.in_(FILA_CONFERENCIA))
@@ -228,6 +275,7 @@ def listar(db: Session, usuario: Usuario, escopo: str) -> list[Solicitacao]:
             consulta = consulta.where(
                 or_(
                     Solicitacao.solicitante_email == usuario.email,
+                    Solicitacao.criado_por_email == usuario.email,
                     Solicitacao.gestor_email == usuario.email,
                 )
             )
@@ -238,7 +286,7 @@ def listar(db: Session, usuario: Usuario, escopo: str) -> list[Solicitacao]:
 
 def acoes_disponiveis(sol: Solicitacao, usuario: Usuario) -> list[str]:
     acoes = []
-    dono = sol.solicitante_email == usuario.email
+    dono = eh_dono(sol, usuario)
     financeiro = usuario.tem(FINANCEIRO)
     # Quem é do financeiro não confere o próprio pedido (outra pessoa confere).
     confere = financeiro and not dono
@@ -289,23 +337,29 @@ def criar_alimentacao(
     dados: DadosAlimentacao,
     arquivo: arquivos.ArquivoValidado,
 ) -> Solicitacao:
-    perfil = db.scalar(select(CadastroUsuario).where(CadastroUsuario.email == usuario.email))
-    if perfil is None or not perfil.perfil_completo or perfil.centro_custo is None:
-        raise RegraNegocio("Complete seu perfil (matrícula e centro de custo) antes de pedir.")
+    pessoa = _pessoa_do_pedido(db, settings, usuario, dados.beneficiario)
 
     agora = agora_utc()
-    pula_gestor = usuario.tem(GESTOR)
-    gestor = None if pula_gestor else _validar_gestor(db, settings, usuario, dados.gestor_email)
+    pula_gestor = pessoa.eh_gestor
+    gestor = (
+        None
+        if pula_gestor
+        else _validar_gestor(
+            db, settings, pessoa.email, pessoa.criado_por_email, dados.gestor_email
+        )
+    )
     _validar_basico(dados)
     empresa = _empresa(db, dados.empresa_id)
 
     sol = Solicitacao(
         tipo=TIPO_ALIMENTACAO,
         status=EM_CONFERENCIA,
-        solicitante_email=usuario.email,
-        solicitante_nome=usuario.nome,
-        matricula=perfil.matricula,
-        centro_custo=perfil.centro_custo.rotulo,
+        solicitante_email=pessoa.email,
+        solicitante_nome=pessoa.nome,
+        criado_por_email=pessoa.criado_por_email,
+        criado_por_nome=pessoa.criado_por_nome,
+        matricula=pessoa.matricula,
+        centro_custo=pessoa.centro_custo,
         empresa=empresa.nome,
         gestor_email=gestor.email if gestor else None,
         gestor_nome=gestor.nome if gestor else None,
@@ -330,7 +384,7 @@ def criar_alimentacao(
             sol,
             notificacoes.emails_financeiro(db),
             "Nova solicitação para conferir",
-            f"{usuario.nome} enviou um reembolso de alimentação para conferência.",
+            f"{_autor(usuario, sol)} enviou um reembolso de alimentação para conferência.",
         )
         db.commit()
     except Exception:
@@ -350,13 +404,15 @@ def reenviar(
     arquivo: arquivos.ArquivoValidado | None,
 ) -> Solicitacao:
     sol = obter(db, usuario, sol_id)
-    _exigir(sol.solicitante_email == usuario.email, "Só quem pediu pode corrigir.")
+    _exigir(eh_dono(sol, usuario), "Só quem pediu pode corrigir.")
     _exigir_status(sol, DEVOLVIDO)
     if sol.tipo != TIPO_ALIMENTACAO:
         raise RegraNegocio("Esta solicitação não é de alimentação.")
     _validar_basico(dados)
     if not sol.pula_gestor:
-        gestor = _validar_gestor(db, settings, usuario, dados.gestor_email)
+        gestor = _validar_gestor(
+            db, settings, sol.solicitante_email, sol.criado_por_email, dados.gestor_email
+        )
         sol.gestor_email, sol.gestor_nome = gestor.email, gestor.nome
     sol.empresa = _empresa(db, dados.empresa_id).nome
     sol.descricao = dados.descricao.strip()
@@ -407,24 +463,30 @@ def criar_viagem(
     dados: DadosViagem,
     arquivos_enviados: list[arquivos.ArquivoValidado],
 ) -> Solicitacao:
-    perfil = db.scalar(select(CadastroUsuario).where(CadastroUsuario.email == usuario.email))
-    if perfil is None or not perfil.perfil_completo or perfil.centro_custo is None:
-        raise RegraNegocio("Complete seu perfil (matrícula e centro de custo) antes de pedir.")
+    pessoa = _pessoa_do_pedido(db, settings, usuario, dados.beneficiario)
     # Na criação nenhuma nota existe ainda: qualquer `id` é recusado.
     _validar_viagem(dados, arquivos_enviados, existentes=set())
 
     agora = agora_utc()
-    pula_gestor = usuario.tem(GESTOR)
-    gestor = None if pula_gestor else _validar_gestor(db, settings, usuario, dados.gestor_email)
+    pula_gestor = pessoa.eh_gestor
+    gestor = (
+        None
+        if pula_gestor
+        else _validar_gestor(
+            db, settings, pessoa.email, pessoa.criado_por_email, dados.gestor_email
+        )
+    )
     empresa = _empresa(db, dados.empresa_id)
 
     sol = Solicitacao(
         tipo=TIPO_VIAGEM,
         status=EM_CONFERENCIA,
-        solicitante_email=usuario.email,
-        solicitante_nome=usuario.nome,
-        matricula=perfil.matricula,
-        centro_custo=perfil.centro_custo.rotulo,
+        solicitante_email=pessoa.email,
+        solicitante_nome=pessoa.nome,
+        criado_por_email=pessoa.criado_por_email,
+        criado_por_nome=pessoa.criado_por_nome,
+        matricula=pessoa.matricula,
+        centro_custo=pessoa.centro_custo,
         empresa=empresa.nome,
         gestor_email=gestor.email if gestor else None,
         gestor_nome=gestor.nome if gestor else None,
@@ -456,7 +518,7 @@ def criar_viagem(
             sol,
             notificacoes.emails_financeiro(db),
             "Nova solicitação para conferir",
-            f"{usuario.nome} enviou um reembolso de viagem ({dados.destino.strip()}) "
+            f"{_autor(usuario, sol)} enviou um reembolso de viagem ({dados.destino.strip()}) "
             "para conferência.",
         )
         db.commit()
@@ -483,14 +545,16 @@ def reenviar_viagem(
     atualizadas), notas sem `id` são novas, e as que não vierem são removidas.
     """
     sol = obter(db, usuario, sol_id)
-    _exigir(sol.solicitante_email == usuario.email, "Só quem pediu pode corrigir.")
+    _exigir(eh_dono(sol, usuario), "Só quem pediu pode corrigir.")
     _exigir_status(sol, DEVOLVIDO)
     if sol.tipo != TIPO_VIAGEM:
         raise RegraNegocio("Esta solicitação não é de viagem.")
     atuais = {d.id: d for d in sol.despesas}
     _validar_viagem(dados, arquivos_enviados, existentes=set(atuais))
     if not sol.pula_gestor:
-        gestor = _validar_gestor(db, settings, usuario, dados.gestor_email)
+        gestor = _validar_gestor(
+            db, settings, sol.solicitante_email, sol.criado_por_email, dados.gestor_email
+        )
         sol.gestor_email, sol.gestor_nome = gestor.email, gestor.nome
     sol.empresa = _empresa(db, dados.empresa_id).nome
     sol.descricao = dados.descricao.strip()
@@ -674,14 +738,18 @@ def criar_adiantamento(
     usuario: Usuario,
     dados: DadosAdiantamento,
 ) -> Solicitacao:
-    perfil = db.scalar(select(CadastroUsuario).where(CadastroUsuario.email == usuario.email))
-    if perfil is None or not perfil.perfil_completo or perfil.centro_custo is None:
-        raise RegraNegocio("Complete seu perfil (matrícula e centro de custo) antes de pedir.")
+    pessoa = _pessoa_do_pedido(db, settings, usuario, dados.beneficiario)
     diarias = _validar_adiantamento(dados)
 
     agora = agora_utc()
-    pula_gestor = usuario.tem(GESTOR)
-    gestor = None if pula_gestor else _validar_gestor(db, settings, usuario, dados.gestor_email)
+    pula_gestor = pessoa.eh_gestor
+    gestor = (
+        None
+        if pula_gestor
+        else _validar_gestor(
+            db, settings, pessoa.email, pessoa.criado_por_email, dados.gestor_email
+        )
+    )
     empresa = _empresa(db, dados.empresa_id)
     valor = _valor_adiantamento(dados, diarias)
     status = AGUARDANDO_PAGAMENTO if pula_gestor else AGUARDANDO_GESTOR
@@ -689,10 +757,12 @@ def criar_adiantamento(
     sol = Solicitacao(
         tipo=TIPO_ADIANTAMENTO,
         status=status,
-        solicitante_email=usuario.email,
-        solicitante_nome=usuario.nome,
-        matricula=perfil.matricula,
-        centro_custo=perfil.centro_custo.rotulo,
+        solicitante_email=pessoa.email,
+        solicitante_nome=pessoa.nome,
+        criado_por_email=pessoa.criado_por_email,
+        criado_por_nome=pessoa.criado_por_nome,
+        matricula=pessoa.matricula,
+        centro_custo=pessoa.centro_custo,
         empresa=empresa.nome,
         gestor_email=gestor.email if gestor else None,
         gestor_nome=gestor.nome if gestor else None,
@@ -702,7 +772,7 @@ def criar_adiantamento(
         viagem_inicio=dados.inicio,
         viagem_fim=dados.fim,
         diarias=diarias,
-        diaria_complementar=dados.complementar is not None,
+        valor_complementar=dados.complementar,
         valor_total=valor,
         alerta_limite=_alerta_total(valor),
         enviado_em=agora,
@@ -712,7 +782,7 @@ def criar_adiantamento(
     db.flush()
     sol.codigo = f"REE-{sol.id:06d}"
     _registrar(db, sol, "enviado", None, status, usuario, None, agora)
-    _avisar_pedido_adiantamento(db, settings, sol, f"{usuario.nome} pediu")
+    _avisar_pedido_adiantamento(db, settings, sol, f"{_autor(usuario, sol)} pediu")
     db.commit()
     return sol
 
@@ -726,20 +796,22 @@ def reenviar_adiantamento(
 ) -> Solicitacao:
     """Correção do pedido devolvido pelo gestor: volta para o gestor."""
     sol = obter(db, usuario, sol_id)
-    _exigir(sol.solicitante_email == usuario.email, "Só quem pediu pode corrigir.")
+    _exigir(eh_dono(sol, usuario), "Só quem pediu pode corrigir.")
     _exigir_status(sol, DEVOLVIDO)
     if sol.tipo != TIPO_ADIANTAMENTO:
         raise RegraNegocio("Esta solicitação não é de adiantamento.")
     diarias = _validar_adiantamento(dados)
     if not sol.pula_gestor:
-        gestor = _validar_gestor(db, settings, usuario, dados.gestor_email)
+        gestor = _validar_gestor(
+            db, settings, sol.solicitante_email, sol.criado_por_email, dados.gestor_email
+        )
         sol.gestor_email, sol.gestor_nome = gestor.email, gestor.nome
     sol.empresa = _empresa(db, dados.empresa_id).nome
     sol.descricao = dados.descricao.strip()
     sol.destino = dados.destino.strip()
     sol.viagem_inicio, sol.viagem_fim = dados.inicio, dados.fim
     sol.diarias = diarias
-    sol.diaria_complementar = dados.complementar is not None
+    sol.valor_complementar = dados.complementar
     sol.valor_total = _valor_adiantamento(dados, diarias)
     sol.alerta_limite = _alerta_total(sol.valor_total)
 
@@ -768,7 +840,7 @@ def enviar_prestacao(
     mantidas, sem `id` são novas, e as que não vierem são removidas.
     """
     sol = obter(db, usuario, sol_id)
-    _exigir(sol.solicitante_email == usuario.email, "Só quem pediu presta contas.")
+    _exigir(eh_dono(sol, usuario), "Só quem pediu presta contas.")
     if sol.tipo != TIPO_ADIANTAMENTO:
         raise RegraNegocio("Esta solicitação não é de adiantamento.")
     if sol.status not in (AGUARDANDO_PRESTACAO, PRESTACAO_DEVOLVIDA):
@@ -829,7 +901,7 @@ def enviar_comprovante(
 ) -> Solicitacao:
     """Comprovante da transferência da sobra (os dados bancários a Thais passa por fora)."""
     sol = obter(db, usuario, sol_id)
-    _exigir(sol.solicitante_email == usuario.email, "Só quem pediu envia o comprovante.")
+    _exigir(eh_dono(sol, usuario), "Só quem pediu envia o comprovante.")
     _exigir_status(sol, AGUARDANDO_DEVOLUCAO)
     if data_transferencia > date.today():
         raise RegraNegocio("A data da transferência não pode ser no futuro.")
@@ -895,7 +967,7 @@ def confirmar_devolucao(
     """A Thais confirma que a sobra caiu na conta (encerra) ou recusa o comprovante."""
     sol = obter(db, usuario, sol_id)
     _exigir(usuario.tem(FINANCEIRO), "Só o financeiro confirma a devolução.")
-    _exigir(sol.solicitante_email != usuario.email, OUTRO_FINANCEIRO)
+    _exigir(not eh_dono(sol, usuario), OUTRO_FINANCEIRO)
     _exigir_status(sol, DEVOLUCAO_EM_CONFERENCIA)
     agora = agora_utc()
     if not aprovar:
@@ -908,7 +980,7 @@ def confirmar_devolucao(
             db,
             settings,
             sol,
-            [sol.solicitante_email],
+            interessados(sol),
             "Comprovante de devolução recusado",
             f"{usuario.nome} recusou o comprovante: {motivo}",
         )
@@ -921,7 +993,7 @@ def confirmar_devolucao(
         db,
         settings,
         sol,
-        [sol.solicitante_email],
+        interessados(sol),
         "Adiantamento encerrado",
         "O financeiro confirmou o recebimento da devolução. O adiantamento está encerrado.",
     )
@@ -981,7 +1053,7 @@ def _conferir_prestacao(
             "a diferença foi para a aprovação do seu gestor."
         )
     notificacoes.enfileirar(
-        db, settings, sol, [sol.solicitante_email], "Prestação de contas conferida", texto
+        db, settings, sol, interessados(sol), "Prestação de contas conferida", texto
     )
     # Resumo para a Thais e o gestor (só informativo, exceto quando há diferença a aprovar).
     resumo = _resumo_prestacao(sol)
@@ -1032,7 +1104,7 @@ def _decidir_diferenca(
         db,
         settings,
         sol,
-        [sol.solicitante_email],
+        interessados(sol),
         "Diferença aprovada",
         f"{usuario.nome} aprovou a diferença de {moeda(falta)}. Agora falta o pagamento.",
     )
@@ -1061,7 +1133,7 @@ def _pagar_diferenca(
         db,
         settings,
         sol,
-        [sol.solicitante_email],
+        interessados(sol),
         "Diferença paga",
         f"A diferença de {moeda(falta)} foi paga em {data_pagamento:%d/%m/%Y}. "
         "O adiantamento está encerrado.",
@@ -1125,8 +1197,8 @@ def _avisar_pedido_adiantamento(
 
 
 def _descrever_diarias(sol: Solicitacao) -> str:
-    if sol.diaria_complementar:
-        return f"diária complementar de {moeda(sol.valor_total)} ({sol.diarias} dia(s))"
+    if sol.valor_complementar is not None:
+        return f"{sol.diarias} diária(s) + diária complementar de {moeda(sol.valor_complementar)}"
     return f"{sol.diarias} diária(s)"
 
 
@@ -1153,9 +1225,8 @@ def _validar_adiantamento(dados: DadosAdiantamento) -> int:
 
 
 def _valor_adiantamento(dados: DadosAdiantamento, diarias: int) -> Decimal:
-    if dados.complementar is None:
-        return VALOR_DIARIA * diarias
-    return dados.complementar
+    """Diárias normais + diária complementar (se houver), que SOMA (Thais, 13/10)."""
+    return VALOR_DIARIA * diarias + (dados.complementar or Decimal("0.00"))
 
 
 def _alerta_total(valor: Decimal) -> str | None:
@@ -1177,7 +1248,7 @@ def conferir(
 ) -> Solicitacao:
     sol = obter(db, usuario, sol_id)
     _exigir(usuario.tem(FINANCEIRO), "Só o financeiro confere.")
-    _exigir(sol.solicitante_email != usuario.email, OUTRO_FINANCEIRO)
+    _exigir(not eh_dono(sol, usuario), OUTRO_FINANCEIRO)
     if sol.status == PRESTACAO_EM_CONFERENCIA:
         return _conferir_prestacao(db, settings, sol, usuario, aprovar, comentario)
     _exigir_status(sol, EM_CONFERENCIA)
@@ -1200,9 +1271,7 @@ def conferir(
             f"{sol.solicitante_nome} pediu um reembolso, já conferido pelo financeiro.",
         )
         texto = "A nota foi conferida pelo financeiro e seguiu para o seu gestor."
-    notificacoes.enfileirar(
-        db, settings, sol, [sol.solicitante_email], "Solicitação conferida", texto
-    )
+    notificacoes.enfileirar(db, settings, sol, interessados(sol), "Solicitação conferida", texto)
     db.commit()
     return sol
 
@@ -1233,7 +1302,7 @@ def decidir_gestor(
         db,
         settings,
         sol,
-        [sol.solicitante_email],
+        interessados(sol),
         "Solicitação aprovada",
         f"{usuario.nome} aprovou. Agora falta o pagamento.",
     )
@@ -1266,7 +1335,7 @@ def pagar(
             db,
             settings,
             sol,
-            [sol.solicitante_email],
+            interessados(sol),
             "Adiantamento pago",
             f"O adiantamento foi pago em {data_pagamento:%d/%m/%Y}. Depois da viagem, "
             "faça a prestação de contas no sistema, com as notas.",
@@ -1277,7 +1346,7 @@ def pagar(
             db,
             settings,
             sol,
-            [sol.solicitante_email],
+            interessados(sol),
             "Reembolso pago",
             f"O reembolso foi pago em {data_pagamento:%d/%m/%Y}.",
         )
@@ -1302,7 +1371,7 @@ def processar_expiracoes(db: Session, settings: Settings, agora: datetime | None
                 db,
                 settings,
                 sol,
-                [sol.solicitante_email],
+                interessados(sol),
                 "Solicitação cancelada",
                 f"{motivo} Se ainda precisar do reembolso, abra uma nova solicitação.",
             )
@@ -1316,7 +1385,7 @@ def processar_expiracoes(db: Session, settings: Settings, agora: datetime | None
                 db,
                 settings,
                 sol,
-                [sol.solicitante_email],
+                interessados(sol),
                 "Lembrete: corrija sua solicitação",
                 f"Sua solicitação está devolvida. Se não for corrigida em {faltam} dias, "
                 "será cancelada.",
@@ -1373,7 +1442,7 @@ def _verificar_prazo_prestacao(db: Session, settings: Settings, agora: datetime)
                 db,
                 settings,
                 sol,
-                [sol.solicitante_email],
+                interessados(sol),
                 "Lembrete: prestação de contas",
                 f"A prestação de contas do adiantamento ({sol.destino}) vence em "
                 f"{prazo:%d/%m/%Y}. Envie as notas pelo sistema.",
@@ -1411,7 +1480,7 @@ def _devolver(
         db,
         settings,
         sol,
-        [sol.solicitante_email],
+        interessados(sol),
         "Solicitação devolvida para correção",
         texto,
     )
@@ -1466,13 +1535,80 @@ def _validar_basico(dados: DadosAlimentacao) -> None:
         raise RegraNegocio("Descrição muito longa (máximo 500 caracteres).")
 
 
+def _pessoa_do_pedido(
+    db: Session, settings: Settings, usuario: Usuario, beneficiario: Beneficiario | None
+) -> _Pessoa:
+    """Quem recebe o reembolso: o próprio usuário ou o beneficiário informado."""
+    if beneficiario is None or beneficiario.email.strip().lower() == usuario.email:
+        perfil = db.scalar(select(CadastroUsuario).where(CadastroUsuario.email == usuario.email))
+        if perfil is None or not perfil.perfil_completo or perfil.centro_custo is None:
+            raise RegraNegocio("Complete seu perfil (matrícula e centro de custo) antes de pedir.")
+        return _Pessoa(
+            email=usuario.email,
+            nome=usuario.nome,
+            matricula=perfil.matricula or "",
+            centro_custo=perfil.centro_custo.rotulo,
+            eh_gestor=usuario.tem(GESTOR),
+        )
+
+    email = beneficiario.email.strip().lower()
+    if not EMAIL_VALIDO.match(email) or len(email) > 254:
+        raise RegraNegocio("E-mail da pessoa do pedido inválido.")
+    cadastro = db.scalar(select(CadastroUsuario).where(CadastroUsuario.email == email))
+    eh_gestor = (cadastro is not None and GESTOR in cadastro.lista_papeis) or (
+        gestores.buscar(db, settings, email) is not None
+    )
+    if cadastro is not None and cadastro.perfil_completo and cadastro.centro_custo:
+        # Já usa o sistema: vale o perfil dela (o que foi digitado é ignorado).
+        nome, matricula, centro = cadastro.nome, cadastro.matricula or "", cadastro.centro_custo
+    else:
+        nome = beneficiario.nome.strip() or (cadastro.nome if cadastro else "")
+        matricula = beneficiario.matricula.strip()
+        if not nome or len(nome) > 200:
+            raise RegraNegocio("Informe o nome da pessoa do pedido.")
+        if not matricula or len(matricula) > 30:
+            raise RegraNegocio("Informe a matrícula da pessoa do pedido.")
+        centro = (
+            db.get(CentroCusto, beneficiario.centro_custo_id)
+            if beneficiario.centro_custo_id
+            else None
+        )
+        if centro is None or not centro.ativo:
+            raise RegraNegocio("Escolha o centro de custo da pessoa do pedido.")
+    return _Pessoa(
+        email=email,
+        nome=nome,
+        matricula=matricula,
+        centro_custo=centro.rotulo,
+        eh_gestor=eh_gestor,
+        criado_por_email=usuario.email,
+        criado_por_nome=usuario.nome,
+    )
+
+
+def _autor(usuario: Usuario, sol: Solicitacao) -> str:
+    """ "Ana" ou "Ana (em nome de Bruno)", para os avisos."""
+    if sol.criado_por_email and sol.criado_por_email != sol.solicitante_email:
+        return f"{usuario.nome} (em nome de {sol.solicitante_nome})"
+    return usuario.nome
+
+
 def _validar_gestor(
-    db: Session, settings: Settings, usuario: Usuario, email: str | None
+    db: Session,
+    settings: Settings,
+    pessoa_email: str,
+    criado_por_email: str | None,
+    email: str | None,
 ) -> gestores.Gestor:
     if not email:
         raise RegraNegocio("Escolha o gestor que vai aprovar.")
-    if email.strip().lower() == usuario.email:
+    escolhido = email.strip().lower()
+    if escolhido == pessoa_email:
+        if criado_por_email and criado_por_email != pessoa_email:
+            raise RegraNegocio("A pessoa do pedido não pode ser a própria aprovadora.")
         raise RegraNegocio("Você não pode ser o seu próprio aprovador.")
+    if criado_por_email and escolhido == criado_por_email:
+        raise RegraNegocio("Quem criou o pedido não pode ser o aprovador.")
     gestor = gestores.buscar(db, settings, email)
     if gestor is None:
         raise RegraNegocio("Gestor não encontrado na lista de gestores.")

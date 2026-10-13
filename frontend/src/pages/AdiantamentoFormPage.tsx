@@ -1,5 +1,12 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
+import {
+  BENEFICIARIO_VAZIO,
+  beneficiarioEhGestor,
+  camposBeneficiario,
+  type BeneficiarioForm,
+} from '@/beneficiario'
+import BeneficiarioCampos from '@/components/BeneficiarioCampos'
 import { useContexto } from '@/components/contexto'
 import { useApi } from '@/hooks/useApi'
 import { api } from '@/services/api'
@@ -8,21 +15,28 @@ import type { Cadastros, Gestor, Solicitacao } from '@/types'
 import { calcularDiarias, formatarMoeda, lerValor, mensagemErro } from '@/utils'
 
 // Adiantamento de viagem: o colaborador pede ANTES de viajar e recebe as
-// diárias (valor da diária vezes os dias) ou, se recebe auxílio refeição, a
-// diária complementar (valor que ele informa). O gestor aprova, o financeiro
-// paga e, depois da viagem, o colaborador presta contas com as notas.
+// diárias (valor da diária vezes os dias) e, se recebe auxílio refeição, a
+// diária complementar (valor que ele informa), que SOMA às diárias (Thais,
+// 13/10). O gestor aprova, o financeiro paga e, depois da viagem, o
+// colaborador presta contas com as notas.
 // Também serve para corrigir um pedido devolvido (/solicitacoes/:id/corrigir-adiantamento).
 export default function AdiantamentoFormPage() {
   const { id } = useParams()
   const corrigindo = Boolean(id)
   const { tem, perfil } = useContexto()
-  const pulaGestor = tem('gestor')
   const navigate = useNavigate()
 
   const { data: cadastros } = useApi<Cadastros>('/api/cadastros')
   const [gestores, setGestores] = useState<Gestor[]>([])
   const [gestoresCarregados, setGestoresCarregados] = useState(false)
   const [original, setOriginal] = useState<Solicitacao | null>(null)
+  const [benef, setBenef] = useState<BeneficiarioForm>(BENEFICIARIO_VAZIO)
+  // Gestor pedindo (ou pedido em nome de um gestor) pula a aprovação de gestor.
+  const pulaGestor = corrigindo
+    ? (original?.pula_gestor ?? tem('gestor'))
+    : benef.ativo
+      ? beneficiarioEhGestor(benef, gestores)
+      : tem('gestor')
 
   const [destino, setDestino] = useState('')
   const [inicio, setInicio] = useState('')
@@ -35,13 +49,19 @@ export default function AdiantamentoFormPage() {
   const [erro, setErro] = useState<string | null>(null)
   const [enviando, setEnviando] = useState(false)
 
+  // A lista de gestores também diz se a pessoa do pedido é gestora.
   useEffect(() => {
-    if (!pulaGestor)
-      api.get<Gestor[]>('/api/gestores').then((r) => {
-        setGestores(r.data)
-        setGestoresCarregados(true)
-      })
-  }, [pulaGestor])
+    api.get<Gestor[]>('/api/gestores').then((r) => {
+      setGestores(r.data)
+      setGestoresCarregados(true)
+    })
+  }, [])
+
+  // Só uma empresa de débito ativa (hoje, só a Tecnored): já vem escolhida.
+  useEffect(() => {
+    if (!corrigindo && cadastros?.empresas.length === 1)
+      setEmpresa(String(cadastros.empresas[0].id))
+  }, [cadastros, corrigindo])
 
   useEffect(() => {
     if (!id || !cadastros) return
@@ -54,9 +74,9 @@ export default function AdiantamentoFormPage() {
       setDescricao(s.descricao)
       setEmpresa(String(cadastros.empresas.find((e) => e.nome === s.empresa)?.id ?? ''))
       setGestor(s.gestor_email ?? '')
-      setComplementar(s.diaria_complementar)
+      setComplementar(s.valor_complementar !== null)
       setValorComplementar(
-        s.diaria_complementar ? Number(s.valor_total).toFixed(2).replace('.', ',') : ''
+        s.valor_complementar === null ? '' : Number(s.valor_complementar).toFixed(2).replace('.', ',')
       )
     })
   }, [id, cadastros])
@@ -65,11 +85,9 @@ export default function AdiantamentoFormPage() {
   const maxDiarias = cadastros?.max_diarias ?? 0
   const diarias = calcularDiarias(inicio, fim)
   const numeroComplementar = lerValor(valorComplementar)
-  const valor = complementar
-    ? Number.isNaN(numeroComplementar)
-      ? 0
-      : numeroComplementar
-    : diarias * valorDiaria
+  const valorNormal = diarias * valorDiaria
+  const extra = complementar && !Number.isNaN(numeroComplementar) ? numeroComplementar : 0
+  const valor = valorNormal + extra
   const limite = Number(cadastros?.limite_solicitacao ?? 0)
 
   async function enviar(e: FormEvent) {
@@ -83,6 +101,7 @@ export default function AdiantamentoFormPage() {
       empresa_id: Number(empresa),
       ...(pulaGestor ? {} : { gestor_email: gestor }),
       ...(complementar ? { diaria_complementar: valorComplementar } : {}),
+      ...(corrigindo ? {} : camposBeneficiario(benef)),
     }
     setEnviando(true)
     try {
@@ -116,7 +135,9 @@ export default function AdiantamentoFormPage() {
             {corrigindo ? `Corrigir ${original?.codigo ?? ''}` : 'Novo adiantamento de viagem'}
           </h1>
           <p className={ui.muted}>
-            {perfil.matricula} · {perfil.centro_custo?.rotulo}
+            {benef.ativo && benef.email.trim()
+              ? `Em nome de ${benef.conhecido?.nome ?? (benef.nome || benef.email.trim())}`
+              : `${perfil.matricula} · ${perfil.centro_custo?.rotulo ?? ''}`}
           </p>
         </div>
       </div>
@@ -166,27 +187,17 @@ export default function AdiantamentoFormPage() {
           </div>
         </div>
 
-        <fieldset className={ui.campo} style={{ border: 0, padding: 0, margin: 0 }}>
-          <legend style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: 6 }}>Diárias</legend>
+        <div className={ui.campo}>
           <label style={{ fontWeight: 400 }}>
             <input
-              type="radio"
-              name="tipoDiaria"
-              checked={!complementar}
-              onChange={() => setComplementar(false)}
-            />{' '}
-            Diárias normais ({formatarMoeda(valorDiaria)} por dia)
-          </label>
-          <label style={{ fontWeight: 400 }}>
-            <input
-              type="radio"
-              name="tipoDiaria"
+              type="checkbox"
               checked={complementar}
-              onChange={() => setComplementar(true)}
+              onChange={(e) => setComplementar(e.target.checked)}
             />{' '}
-            Diária complementar — recebo auxílio refeição (trabalho 100% presencial no escritório)
+            Também pedir diária complementar — recebo auxílio refeição (trabalho 100% presencial
+            no escritório)
           </label>
-        </fieldset>
+        </div>
         {complementar && (
           <div className={ui.campo}>
             <label htmlFor="valorComplementar">Valor da diária complementar (R$)</label>
@@ -198,25 +209,28 @@ export default function AdiantamentoFormPage() {
               onChange={(e) => setValorComplementar(e.target.value)}
               required
             />
-            <span className={ui.ajuda}>Não tem valor fixo: informe o total que você precisa.</span>
+            <span className={ui.ajuda}>
+              Não tem valor fixo: informe o total da viagem. Ele é somado às diárias.
+            </span>
           </div>
         )}
 
         <div className={ui.info} aria-live="polite">
           {diarias === 0 ? (
             'Informe a ida e a volta para calcular as diárias.'
-          ) : complementar ? (
-            <strong>
-              Diária complementar: {formatarMoeda(valor)} ({diarias} dia{diarias > 1 ? 's' : ''} de
-              viagem)
-            </strong>
           ) : (
             <>
               <strong>
                 {diarias} diária{diarias > 1 ? 's' : ''} × {formatarMoeda(valorDiaria)} ={' '}
-                {formatarMoeda(valor)}
+                {formatarMoeda(valorNormal)}
+                {complementar && (
+                  <>
+                    {' '}
+                    + complementar {formatarMoeda(extra)} = {formatarMoeda(valor)}
+                  </>
+                )}
               </strong>
-              <div className={ui.ajuda}>Conta o dia da ida e o da volta.</div>
+              <div className={ui.ajuda}>Conta o dia da ida e o da volta (fim de semana também).</div>
             </>
           )}
         </div>
@@ -245,6 +259,14 @@ export default function AdiantamentoFormPage() {
           <span className={ui.ajuda}>{descricao.length}/500</span>
         </div>
 
+        {!corrigindo && (
+          <BeneficiarioCampos
+            valor={benef}
+            onChange={setBenef}
+            centros={cadastros?.centros_custo ?? []}
+          />
+        )}
+
         <div className={ui.grade}>
           <div className={ui.campo}>
             <label htmlFor="empresa">Empresa de débito</label>
@@ -262,11 +284,13 @@ export default function AdiantamentoFormPage() {
               <label htmlFor="gestor">Gestor que vai aprovar</label>
               <select id="gestor" value={gestor} onChange={(e) => setGestor(e.target.value)} required>
                 <option value="">Selecione…</option>
-                {gestores.map((g) => (
-                  <option key={g.email} value={g.email}>
-                    {g.nome}
-                  </option>
-                ))}
+                {gestores
+                  .filter((g) => g.email !== benef.email.trim().toLowerCase())
+                  .map((g) => (
+                    <option key={g.email} value={g.email}>
+                      {g.nome}
+                    </option>
+                  ))}
               </select>
               {gestoresCarregados && gestores.length === 0 && (
                 <span className={ui.ajuda}>
@@ -278,7 +302,7 @@ export default function AdiantamentoFormPage() {
           )}
         </div>
         {pulaGestor && (
-          <p className={ui.ajuda}>Como você é gestor, o pedido vai direto para o financeiro pagar.</p>
+          <p className={ui.ajuda}>{benef.ativo ? 'Como essa pessoa é gestora,' : 'Como você é gestor,'} o pedido vai direto para o financeiro pagar.</p>
         )}
 
         {erro && <div className={ui.erro}>{erro}</div>}

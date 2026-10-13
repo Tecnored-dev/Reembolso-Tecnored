@@ -35,7 +35,7 @@ def pedido(gestor=GESTOR, **extra) -> dict:
         "viagem_inicio": INICIO.isoformat(),
         "viagem_fim": FIM.isoformat(),
         "descricao": "Visita técnica à planta",
-        "empresa_id": 2,
+        "empresa_id": 1,
         **extra,
     }
     if gestor:
@@ -113,7 +113,7 @@ def test_pedido_calcula_diarias_e_vai_para_o_gestor(cenario, db):
     assert sol["diarias"] == 3 and sol["valor_total"] == "405.00"
     assert sol["valor_diaria"] == "135.00"
     assert sol["despesas"] == [] and sol["valor_gasto"] is None and sol["saldo"] is None
-    assert sol["empresa"] == "TECNORED MARABA" and sol["destino"] == "Marabá - PA"
+    assert sol["empresa"] == "TECNORED" and sol["destino"] == "Marabá - PA"
     assert [n.para for n in avisos(db, sol["id"])] == [GESTOR]
 
 
@@ -499,12 +499,13 @@ def test_cadastros_trazem_valor_da_diaria(cenario):
 # ---------------------------------------------------------------------------
 # Respostas da Thais (09/10/2026)
 # ---------------------------------------------------------------------------
-def test_diaria_complementar_usa_o_valor_informado(cenario, db):
+def test_diaria_complementar_soma_as_diarias_normais(cenario, db):
+    """Thais, 13/10: a complementar SOMA (não substitui)."""
     sol = criar_adiantamento(cenario, diaria_complementar="250,00")
-    assert sol["diaria_complementar"] is True
-    assert sol["diarias"] == 3 and sol["valor_total"] == "250.00"
+    assert sol["diaria_complementar"] is True and sol["valor_complementar"] == "250.00"
+    assert sol["diarias"] == 3 and sol["valor_total"] == "655.00"  # 3 x 135 + 250
     aviso = avisos(db, sol["id"])[0]
-    assert "diária complementar de R$ 250,00" in aviso.corpo
+    assert "3 diária(s) + diária complementar de R$ 250,00" in aviso.corpo
 
 
 def test_diaria_complementar_vazia_e_diaria_normal(cenario):
@@ -525,6 +526,7 @@ def test_correcao_troca_complementar_por_diarias_normais(cenario):
     entrar(cenario, COLAB, "")
     r = cenario.post(f"/api/solicitacoes/{sol['id']}/reenviar-adiantamento", json=pedido())
     assert r.json()["diaria_complementar"] is False and r.json()["valor_total"] == "405.00"
+    assert r.json()["valor_complementar"] is None
 
 
 def test_prazo_da_prestacao_lembrete_e_vencimento(cenario, db, settings):

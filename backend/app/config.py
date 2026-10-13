@@ -34,12 +34,11 @@ MAX_DESPESAS_VIAGEM = 30  # notas por reembolso de viagem (e por prestação de 
 # viagem internacional não tem diária (só reembolso); a prestação de contas
 # deve vir em até 60 dias. Diária complementar: só para quem trabalha 100%
 # presencial e recebe auxílio refeição, com valor livre (sem valor fixo).
+# Contagem de dias: corridos, contando ida e volta (sexta a segunda = 4
+# diárias; confirmado pela Thais em 13/10).
 # CONFIRMAR COM A THAIS — ainda são suposições fáceis de trocar aqui:
-#  - contagem de dias: corridos, contando o dia da ida e o da volta
-#    (segunda a quarta = 3 diárias; ela disse "conta o dia útil" e falta
-#    confirmar se sábado e domingo entram);
-#  - a diária complementar substitui as diárias normais (no formulário antigo
-#    era uma opção da mesma lista) e o valor informado é o total do pedido;
+#  - o valor da diária complementar (que SOMA às normais, Thais 13/10) é o
+#    total da viagem, não por dia;
 #  - lembrete da prestação 7 dias antes do prazo e aviso quando vencer
 #    (sem bloquear nem cancelar: o dinheiro já foi pago).
 VALOR_DIARIA = Decimal("135.00")

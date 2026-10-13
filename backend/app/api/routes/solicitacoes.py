@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import date
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile
@@ -66,11 +67,22 @@ class PedidoAdiantamento(BaseModel):
     # Diária complementar (quem recebe auxílio refeição): valor total, ex. "250,00".
     # Vazio ou ausente = diárias normais.
     diaria_complementar: str | None = Field(default=None, max_length=20)
+    # Pedido em nome de outra pessoa (opcional).
+    beneficiario_email: str | None = Field(default=None, max_length=254)
+    beneficiario_nome: str = Field(default="", max_length=200)
+    beneficiario_matricula: str = Field(default="", max_length=30)
+    beneficiario_centro_custo_id: int | None = None
 
     def dados(self) -> fluxo.DadosAdiantamento:
         complementar = (self.diaria_complementar or "").strip()
         return fluxo.DadosAdiantamento(
             complementar=ler_valor(complementar) if complementar else None,
+            beneficiario=_beneficiario(
+                self.beneficiario_email,
+                self.beneficiario_nome,
+                self.beneficiario_matricula,
+                self.beneficiario_centro_custo_id,
+            ),
             destino=self.destino,
             inicio=self.viagem_inicio,
             fim=self.viagem_fim,
@@ -81,6 +93,30 @@ class PedidoAdiantamento(BaseModel):
 
 
 _ROTULO_COMPROVANTE = "Comprovante da devolução"
+
+
+def _beneficiario_form(
+    email: str, nome: str, matricula: str, centro_custo_id: str
+) -> fluxo.Beneficiario | None:
+    try:
+        centro = int(centro_custo_id) if centro_custo_id.strip() else None
+    except ValueError:
+        raise RegraNegocio("Centro de custo inválido.") from None
+    return _beneficiario(email, nome, matricula, centro)
+
+
+def _beneficiario(
+    email: str | None, nome: str, matricula: str, centro_custo_id: int | None
+) -> fluxo.Beneficiario | None:
+    """Pedido em nome de outra pessoa: só existe se o e-mail dela vier preenchido."""
+    if not (email or "").strip():
+        return None
+    return fluxo.Beneficiario(
+        email=email.strip(),
+        nome=nome or "",
+        matricula=matricula or "",
+        centro_custo_id=centro_custo_id,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -96,6 +132,9 @@ def _resumo(sol: Solicitacao) -> dict:
         "status_rotulo": fluxo.ROTULO_STATUS.get(sol.status, sol.status),
         "solicitante_nome": sol.solicitante_nome,
         "solicitante_email": sol.solicitante_email,
+        # Preenchido só quando alguém pediu em nome do solicitante.
+        "criado_por_nome": sol.criado_por_nome,
+        "criado_por_email": sol.criado_por_email,
         "gestor_nome": sol.gestor_nome,
         "descricao": sol.descricao,
         "destino": sol.destino,
@@ -120,6 +159,9 @@ def _completo(sol: Solicitacao, usuario: Usuario) -> dict:
         "viagem_fim": _iso(sol.viagem_fim),
         "diarias": sol.diarias,
         "diaria_complementar": bool(sol.diaria_complementar),
+        "valor_complementar": (
+            None if sol.valor_complementar is None else str(sol.valor_complementar)
+        ),
         "prazo_prestacao": _iso(fluxo.prazo_prestacao(sol)),
         "valor_diaria": str(VALOR_DIARIA) if sol.tipo == fluxo.TIPO_ADIANTAMENTO else None,
         "valor_gasto": None if sol.valor_gasto is None else str(sol.valor_gasto),
@@ -289,13 +331,26 @@ async def criar_alimentacao(
     descricao: str = Form(...),
     empresa_id: int = Form(...),
     gestor_email: str | None = Form(None),
+    # Pedido em nome de outra pessoa (opcional; só o e-mail liga a opção).
+    beneficiario_email: str = Form(""),
+    beneficiario_nome: str = Form(""),
+    beneficiario_matricula: str = Form(""),
+    beneficiario_centro_custo_id: str = Form(""),
     arquivo: UploadFile | None = File(None),
     usuario: Usuario = Depends(usuario_atual),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
     armazenamento: Armazenamento = Depends(get_armazenamento),
 ):
-    dados = _dados(data_despesa, valor, descricao, empresa_id, gestor_email)
+    dados = replace(
+        _dados(data_despesa, valor, descricao, empresa_id, gestor_email),
+        beneficiario=_beneficiario_form(
+            beneficiario_email,
+            beneficiario_nome,
+            beneficiario_matricula,
+            beneficiario_centro_custo_id,
+        ),
+    )
     validado = await _arquivo(arquivo)
     if validado is None:
         raise RegraNegocio("Anexe a foto ou o PDF da nota.")
@@ -314,14 +369,27 @@ async def criar_viagem(
     empresa_id: int = Form(...),
     gestor_email: str | None = Form(None),
     despesas: str = Form(...),
+    # Pedido em nome de outra pessoa (opcional; só o e-mail liga a opção).
+    beneficiario_email: str = Form(""),
+    beneficiario_nome: str = Form(""),
+    beneficiario_matricula: str = Form(""),
+    beneficiario_centro_custo_id: str = Form(""),
     arquivos: list[UploadFile] = File([]),
     usuario: Usuario = Depends(usuario_atual),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
     armazenamento: Armazenamento = Depends(get_armazenamento),
 ):
-    dados = _dados_viagem(
-        destino, viagem_inicio, viagem_fim, descricao, empresa_id, gestor_email, despesas
+    dados = replace(
+        _dados_viagem(
+            destino, viagem_inicio, viagem_fim, descricao, empresa_id, gestor_email, despesas
+        ),
+        beneficiario=_beneficiario_form(
+            beneficiario_email,
+            beneficiario_nome,
+            beneficiario_matricula,
+            beneficiario_centro_custo_id,
+        ),
     )
     validados = await _arquivos(arquivos)
     sol = fluxo.criar_viagem(db, settings, armazenamento, usuario, dados, validados)
