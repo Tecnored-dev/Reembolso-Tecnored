@@ -143,7 +143,7 @@ def test_devolucao_do_gestor_volta_para_conferencia(cenario):
             "data_despesa": date.today().isoformat(),
             "valor": "50,00",
             "descricao": "Almoço (nota nova)",
-            "empresa_id": "2",
+            "empresa_id": "1",
             "gestor_email": GESTOR,
         },
         files={"arquivo": ("nota.pdf", PDF, "application/pdf")},
@@ -151,7 +151,7 @@ def test_devolucao_do_gestor_volta_para_conferencia(cenario):
     corpo = r.json()
     assert r.status_code == 200, r.text
     assert corpo["status"] == "em_conferencia"  # volta para a Thais, não para o gestor
-    assert corpo["valor_total"] == "50.00" and corpo["empresa"] == "TECNORED MARABA"
+    assert corpo["valor_total"] == "50.00" and corpo["empresa"] == "TECNORED"
     assert corpo["motivo_devolucao"] is None
     assert corpo["despesas"][0]["arquivo_tipo"] == "application/pdf"
     assert not antiga.exists()  # arquivo velho removido do armazenamento
@@ -293,10 +293,17 @@ def test_tarefa_de_expiracao_so_admin(cenario):
 def test_cadastros_e_perfil(cenario):
     dados = cenario.get("/api/cadastros").json()
     assert dados["centros_custo"][0]["rotulo"] == "3350 - T.I / T.A"
-    assert [e["nome"] for e in dados["empresas"]] == ["TECNORED", "TECNORED MARABA"]
+    # "Inicialmente só Tecnored" (13/10): a Marabá está inativa.
+    assert [e["nome"] for e in dados["empresas"]] == ["TECNORED"]
     perfil = cenario.get("/api/perfil").json()
     assert perfil["completo"] is True and perfil["matricula"] == "1234"
     assert (
         cenario.put("/api/perfil", json={"matricula": "1", "centro_custo_id": 99}).status_code
         == 400
     )
+
+
+def test_empresa_inativa_nao_aceita(cenario):
+    entrar(cenario, COLAB)
+    r = enviar(cenario, empresa_id="2")  # TECNORED MARABA, inativa desde 13/10
+    assert r.status_code == 400 and "Empresa de débito inválida" in r.json()["detail"]

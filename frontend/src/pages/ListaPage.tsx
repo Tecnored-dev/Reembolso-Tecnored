@@ -72,10 +72,24 @@ export default function ListaPage({ escopo, titulo, descricao, vazio }: Props) {
                       {s.codigo}
                     </Link>
                   </td>
-                  {mostrarSolicitante && <td>{s.solicitante_nome}</td>}
+                  {mostrarSolicitante && (
+                    <td>
+                      {s.solicitante_nome}
+                      {s.criado_por_nome && (
+                        <div className={ui.muted}>pedido por {s.criado_por_nome}</div>
+                      )}
+                    </td>
+                  )}
                   <td>{s.tipo_rotulo}</td>
                   <td className={ui.opcional}>
                     {s.destino ? `${s.destino} · ${s.descricao}` : s.descricao}
+                    {escopo === 'minhas' && s.criado_por_nome && (
+                      <div className={ui.muted}>
+                        {s.criado_por_email === s.solicitante_email
+                          ? ''
+                          : `${s.solicitante_nome} · pedido por ${s.criado_por_nome}`}
+                      </div>
+                    )}
                     {s.alerta_limite && (
                       <span title={s.alerta_limite} aria-label="Acima do limite">
                         {' '}

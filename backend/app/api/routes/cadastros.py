@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.auth.deps import usuario_atual
+from app.auth.papeis import GESTOR
 from app.auth.sessoes import Usuario, agora_utc
 from app.config import (
     CATEGORIAS_VIAGEM,
@@ -115,4 +116,42 @@ def listar_gestores(
         {"email": g.email, "nome": g.nome}
         for g in gestores.listar(db, settings)
         if g.email != usuario.email
+    ]
+
+
+@router.get("/usuarios")
+def buscar_usuarios(
+    busca: str = "",
+    usuario: Usuario = Depends(usuario_atual),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
+    """Colegas que já entraram no sistema, para pedir em nome de outra pessoa.
+
+    Quem nunca entrou não aparece aqui (falta a permissão `User.ReadBasic.All`
+    para ler o Azure); nesse caso o formulário pede e-mail, nome, matrícula e
+    centro de custo.
+    """
+    termo = busca.strip().lower()
+    if len(termo) < 2:
+        return []
+    padrao = f"%{termo}%"
+    encontrados = db.scalars(
+        select(CadastroUsuario)
+        .where(
+            CadastroUsuario.email != usuario.email,
+            (CadastroUsuario.email.ilike(padrao)) | (CadastroUsuario.nome.ilike(padrao)),
+        )
+        .order_by(CadastroUsuario.nome)
+        .limit(15)
+    ).all()
+    emails_gestores = {g.email for g in gestores.listar(db, settings)}
+    return [
+        {
+            "email": u.email,
+            "nome": u.nome,
+            "perfil_completo": u.perfil_completo,
+            "eh_gestor": GESTOR in u.lista_papeis or u.email in emails_gestores,
+        }
+        for u in encontrados
     ]

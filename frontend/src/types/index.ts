@@ -108,6 +108,9 @@ export interface SolicitacaoResumo {
   status_rotulo: string
   solicitante_nome: string
   solicitante_email: string
+  /** Só quando alguém pediu em nome do solicitante (quem recebe). */
+  criado_por_nome: string | null
+  criado_por_email: string | null
   gestor_nome: string | null
   descricao: string
   /** Só em viagem e adiantamento */
@@ -152,6 +155,8 @@ export interface Solicitacao extends SolicitacaoResumo {
   diarias: number | null
   /** Diária complementar (quem recebe auxílio refeição): o valor foi informado */
   diaria_complementar: boolean
+  /** Valor da diária complementar, já somado em `valor_total` */
+  valor_complementar: string | null
   /** Data limite da prestação de contas (60 dias depois da volta) */
   prazo_prestacao: string | null
   valor_diaria: string | null
@@ -177,4 +182,12 @@ export interface Solicitacao extends SolicitacaoResumo {
   despesas: Despesa[]
   historico: EventoHistorico[]
   acoes: Acao[]
+}
+
+/** GET /api/usuarios?busca= — colegas que já entraram no sistema */
+export interface UsuarioBusca {
+  email: string
+  nome: string
+  perfil_completo: boolean
+  eh_gestor: boolean
 }

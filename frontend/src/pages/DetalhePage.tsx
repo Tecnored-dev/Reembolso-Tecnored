@@ -221,10 +221,10 @@ export default function DetalhePage() {
     if (adiantamento)
       return {
         titulo: 'Sua aprovação',
-        texto: `Adiantamento de ${
-          sol.diaria_complementar
-            ? `diária complementar (${formatarMoeda(sol.valor_total)}, quem recebe auxílio refeição)`
-            : `${sol.diarias} diária(s)`
+        texto: `Adiantamento de ${sol.diarias} diária(s)${
+          sol.valor_complementar !== null
+            ? ` + diária complementar de ${formatarMoeda(sol.valor_complementar)} (quem recebe auxílio refeição)`
+            : ''
         } para ${sol.destino}, pago antes da viagem. Depois, o colaborador presta contas com as notas.`,
         ok: 'Aprovar',
       }
@@ -252,6 +252,12 @@ export default function DetalhePage() {
             <p className={ui.muted}>
               {sol.tipo_rotulo} · enviada em {formatarDataHora(sol.enviado_em)} · {sol.status_rotulo}
             </p>
+            {sol.criado_por_nome && (
+              <p className={ui.muted}>
+                Pedido por <strong>{sol.criado_por_nome}</strong> em nome de{' '}
+                <strong>{sol.solicitante_nome}</strong>
+              </p>
+            )}
           </div>
           <div className={styles.valor}>
             {adiantamento && <span className={styles.valorRotulo}>Adiantado</span>}
@@ -551,9 +557,11 @@ export default function DetalhePage() {
                   <div>
                     <dt>Diárias</dt>
                     <dd>
-                      {sol.diaria_complementar
-                        ? `Complementar: ${formatarMoeda(sol.valor_total)} (${sol.diarias} dia(s))`
-                        : `${sol.diarias} × ${formatarMoeda(sol.valor_diaria ?? 0)} = ${formatarMoeda(sol.valor_total)}`}
+                      {sol.diarias} × {formatarMoeda(sol.valor_diaria ?? 0)}
+                      {sol.valor_complementar !== null && (
+                        <> + complementar {formatarMoeda(sol.valor_complementar)}</>
+                      )}{' '}
+                      = {formatarMoeda(sol.valor_total)}
                     </dd>
                   </div>
                 )}

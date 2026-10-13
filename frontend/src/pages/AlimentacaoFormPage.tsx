@@ -1,5 +1,12 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
+import {
+  BENEFICIARIO_VAZIO,
+  beneficiarioEhGestor,
+  camposBeneficiario,
+  type BeneficiarioForm,
+} from '@/beneficiario'
+import BeneficiarioCampos from '@/components/BeneficiarioCampos'
 import { useContexto } from '@/components/contexto'
 import { useApi } from '@/hooks/useApi'
 import { api } from '@/services/api'
@@ -17,13 +24,19 @@ export default function AlimentacaoFormPage() {
   const { id } = useParams()
   const corrigindo = Boolean(id)
   const { tem, perfil } = useContexto()
-  const pulaGestor = tem('gestor')
   const navigate = useNavigate()
 
   const { data: cadastros } = useApi<Cadastros>('/api/cadastros')
   const [gestores, setGestores] = useState<Gestor[]>([])
   const [gestoresCarregados, setGestoresCarregados] = useState(false)
   const [original, setOriginal] = useState<Solicitacao | null>(null)
+  const [benef, setBenef] = useState<BeneficiarioForm>(BENEFICIARIO_VAZIO)
+  // Gestor pedindo (ou pedido em nome de um gestor) pula a aprovação de gestor.
+  const pulaGestor = corrigindo
+    ? (original?.pula_gestor ?? tem('gestor'))
+    : benef.ativo
+      ? beneficiarioEhGestor(benef, gestores)
+      : tem('gestor')
 
   const [data, setData] = useState(hojeISO())
   const [valor, setValor] = useState('')
@@ -35,13 +48,19 @@ export default function AlimentacaoFormPage() {
   const [erro, setErro] = useState<string | null>(null)
   const [enviando, setEnviando] = useState(false)
 
+  // A lista de gestores também diz se a pessoa do pedido é gestora.
   useEffect(() => {
-    if (!pulaGestor)
-      api.get<Gestor[]>('/api/gestores').then((r) => {
-        setGestores(r.data)
-        setGestoresCarregados(true)
-      })
-  }, [pulaGestor])
+    api.get<Gestor[]>('/api/gestores').then((r) => {
+      setGestores(r.data)
+      setGestoresCarregados(true)
+    })
+  }, [])
+
+  // Só uma empresa de débito ativa (hoje, só a Tecnored): já vem escolhida.
+  useEffect(() => {
+    if (!corrigindo && cadastros?.empresas.length === 1)
+      setEmpresa(String(cadastros.empresas[0].id))
+  }, [cadastros, corrigindo])
 
   // Correção: carrega o que foi enviado para editar em cima.
   useEffect(() => {
@@ -84,6 +103,9 @@ export default function AlimentacaoFormPage() {
     form.append('descricao', descricao)
     form.append('empresa_id', empresa)
     if (!pulaGestor) form.append('gestor_email', gestor)
+    if (!corrigindo)
+      for (const [campo, conteudo] of Object.entries(camposBeneficiario(benef)))
+        form.append(campo, conteudo)
     if (arquivo) form.append('arquivo', arquivo)
 
     setEnviando(true)
@@ -119,7 +141,9 @@ export default function AlimentacaoFormPage() {
             {corrigindo ? `Corrigir ${original?.codigo ?? ''}` : 'Novo reembolso de alimentação'}
           </h1>
           <p className={ui.muted}>
-            {perfil.matricula} · {perfil.centro_custo?.rotulo}
+            {benef.ativo && benef.email.trim()
+              ? `Em nome de ${benef.conhecido?.nome ?? (benef.nome || benef.email.trim())}`
+              : `${perfil.matricula} · ${perfil.centro_custo?.rotulo ?? ''}`}
           </p>
         </div>
       </div>
@@ -176,6 +200,14 @@ export default function AlimentacaoFormPage() {
           <span className={ui.ajuda}>{descricao.length}/500</span>
         </div>
 
+        {!corrigindo && (
+          <BeneficiarioCampos
+            valor={benef}
+            onChange={setBenef}
+            centros={cadastros?.centros_custo ?? []}
+          />
+        )}
+
         <div className={ui.grade}>
           <div className={ui.campo}>
             <label htmlFor="empresa">Empresa de débito</label>
@@ -193,11 +225,13 @@ export default function AlimentacaoFormPage() {
               <label htmlFor="gestor">Gestor que vai aprovar</label>
               <select id="gestor" value={gestor} onChange={(e) => setGestor(e.target.value)} required>
                 <option value="">Selecione…</option>
-                {gestores.map((g) => (
-                  <option key={g.email} value={g.email}>
-                    {g.nome}
-                  </option>
-                ))}
+                {gestores
+                  .filter((g) => g.email !== benef.email.trim().toLowerCase())
+                  .map((g) => (
+                    <option key={g.email} value={g.email}>
+                      {g.nome}
+                    </option>
+                  ))}
               </select>
               {gestoresCarregados && gestores.length === 0 && (
                 <span className={ui.ajuda}>
@@ -210,7 +244,7 @@ export default function AlimentacaoFormPage() {
         </div>
         {pulaGestor && (
           <p className={ui.ajuda}>
-            Como você é gestor, depois da conferência do financeiro segue direto para pagamento.
+            {benef.ativo ? 'Como essa pessoa é gestora,' : 'Como você é gestor,'} depois da conferência do financeiro segue direto para pagamento.
           </p>
         )}
 

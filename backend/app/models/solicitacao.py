@@ -34,13 +34,21 @@ DINHEIRO = Numeric(12, 2)
 class Solicitacao(Base):
     __tablename__ = "solicitacoes"
 
+    @property
+    def diaria_complementar(self) -> bool:
+        return self.valor_complementar is not None
+
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     codigo: Mapped[str | None] = mapped_column(String(20), nullable=True, unique=True)
     tipo: Mapped[str] = mapped_column(String(30), nullable=False)
     status: Mapped[str] = mapped_column(String(30), nullable=False)
 
+    # Quem RECEBE o reembolso. Num pedido em nome de outra pessoa, é ela; quem
+    # preencheu fica em `criado_por_*` (vazio quando a pessoa pediu para si).
     solicitante_email: Mapped[str] = mapped_column(String(254), nullable=False)
     solicitante_nome: Mapped[str] = mapped_column(String(200), nullable=False)
+    criado_por_email: Mapped[str | None] = mapped_column(String(254), nullable=True)
+    criado_por_nome: Mapped[str | None] = mapped_column(String(200), nullable=True)
     matricula: Mapped[str] = mapped_column(String(30), nullable=False)
     centro_custo: Mapped[str] = mapped_column(String(140), nullable=False)  # "3350 - T.I / T.A"
     empresa: Mapped[str] = mapped_column(String(120), nullable=False)
@@ -58,8 +66,9 @@ class Solicitacao(Base):
     # Só em adiantamento: quantas diárias foram pagas antes da viagem. O valor
     # adiantado fica em `valor_total`; o gasto comprovado, em `valor_gasto`.
     diarias: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    # Diária complementar (quem recebe auxílio refeição): valor informado.
-    diaria_complementar: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # Diária complementar (quem recebe auxílio refeição): valor informado pelo
+    # colaborador, somado às diárias normais (já incluído em `valor_total`).
+    valor_complementar: Mapped[Decimal | None] = mapped_column(DINHEIRO, nullable=True)
     valor_gasto: Mapped[Decimal | None] = mapped_column(DINHEIRO, nullable=True)
     prestacao_enviada_em: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     prestacao_conferida_por: Mapped[str | None] = mapped_column(String(200), nullable=True)
@@ -111,6 +120,7 @@ class Solicitacao(Base):
         Index("ix_solicitacoes_status", "status"),
         Index("ix_solicitacoes_solicitante", "solicitante_email"),
         Index("ix_solicitacoes_gestor", "gestor_email"),
+        Index("ix_solicitacoes_criado_por", "criado_por_email"),
     )
 
 
