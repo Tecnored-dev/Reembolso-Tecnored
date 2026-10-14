@@ -65,8 +65,10 @@ from app.config import (
     DIAS_LEMBRETE_PRESTACAO,
     LIMITE_REFEICAO_DIA,
     LIMITE_SOLICITACAO,
+    LOCAIS_REFEICAO,
     MAX_DESPESAS_VIAGEM,
     MAX_DIARIAS,
+    MOTIVOS,
     PRAZO_PRESTACAO_DIAS,
     VALOR_DIARIA,
     Settings,
@@ -178,6 +180,9 @@ class DadosAlimentacao:
     empresa_id: int
     gestor_email: str | None
     beneficiario: Beneficiario | None = None
+    motivo: str = ""
+    # Só alimentação: chave de LOCAIS_REFEICAO (pinda, maraba, outro).
+    local: str = ""
 
 
 @dataclass(frozen=True)
@@ -359,7 +364,7 @@ def criar_alimentacao(
             db, settings, pessoa.email, pessoa.criado_por_email, dados.gestor_email
         )
     )
-    _validar_basico(dados)
+    _validar_basico(dados, tipo)
     empresa = _empresa(db, dados.empresa_id)
 
     sol = Solicitacao(
@@ -376,8 +381,10 @@ def criar_alimentacao(
         gestor_nome=gestor.nome if gestor else None,
         pula_gestor=pula_gestor,
         descricao=dados.descricao.strip(),
+        motivo=dados.motivo,
+        local_refeicao=dados.local if tipo == TIPO_ALIMENTACAO else None,
         valor_total=dados.valor,
-        alerta_limite=_alerta(dados.valor, tipo),
+        alerta_limite=_alerta(dados.valor, tipo, dados.local),
         enviado_em=agora,
         ultima_movimentacao_em=agora,
     )
@@ -420,7 +427,7 @@ def reenviar(
     _exigir_status(sol, DEVOLVIDO)
     if sol.tipo not in TIPOS_UMA_NOTA:
         raise RegraNegocio("Esta solicitação não é de alimentação (nem de despesas diversas).")
-    _validar_basico(dados)
+    _validar_basico(dados, sol.tipo)
     if not sol.pula_gestor:
         gestor = _validar_gestor(
             db, settings, sol.solicitante_email, sol.criado_por_email, dados.gestor_email
@@ -429,7 +436,9 @@ def reenviar(
     sol.empresa = _empresa(db, dados.empresa_id).nome
     sol.descricao = dados.descricao.strip()
     sol.valor_total = dados.valor
-    sol.alerta_limite = _alerta(dados.valor, sol.tipo)
+    sol.motivo = dados.motivo
+    sol.local_refeicao = dados.local if sol.tipo == TIPO_ALIMENTACAO else None
+    sol.alerta_limite = _alerta(dados.valor, sol.tipo, dados.local)
 
     agora = agora_utc()
     despesa = sol.despesas[0]
@@ -1538,7 +1547,11 @@ def _registrar(
     )
 
 
-def _validar_basico(dados: DadosAlimentacao) -> None:
+def _validar_basico(dados: DadosAlimentacao, tipo: str = TIPO_ALIMENTACAO) -> None:
+    if dados.motivo not in MOTIVOS:
+        raise RegraNegocio("Escolha o motivo da despesa.")
+    if tipo == TIPO_ALIMENTACAO and dados.local not in LOCAIS_REFEICAO:
+        raise RegraNegocio("Escolha onde foi a refeição.")
     if dados.data_despesa > date.today():
         raise RegraNegocio("A data da despesa não pode ser no futuro.")
     if not dados.descricao.strip():
@@ -1634,10 +1647,17 @@ def _empresa(db: Session, empresa_id: int) -> Empresa:
     return empresa
 
 
-def _alerta(valor: Decimal, tipo: str = TIPO_ALIMENTACAO) -> str | None:
-    """Limite diário de refeição: só vale para alimentação."""
-    if tipo == TIPO_ALIMENTACAO and valor > LIMITE_REFEICAO_DIA:
-        return f"Acima do limite diário de refeição da política ({moeda(LIMITE_REFEICAO_DIA)})."
+def _alerta(valor: Decimal, tipo: str = TIPO_ALIMENTACAO, local: str = "outro") -> str | None:
+    """Limite de refeição (só alimentação), conforme o local escolhido."""
+    if tipo != TIPO_ALIMENTACAO:
+        return None
+    rotulo, limite = LOCAIS_REFEICAO.get(local, LOCAIS_REFEICAO["outro"])
+    if valor > limite:
+        if local in ("pinda", "maraba"):
+            return (
+                f"Acima do limite diário de refeição da política para {rotulo} ({moeda(limite)})."
+            )
+        return f"Acima do limite diário de refeição da política ({moeda(limite)})."
     return None
 
 

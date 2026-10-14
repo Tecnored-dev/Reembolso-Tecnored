@@ -14,7 +14,9 @@ from app.config import (
     CATEGORIAS_VIAGEM,
     LIMITE_REFEICAO_DIA,
     LIMITE_SOLICITACAO,
+    LOCAIS_REFEICAO,
     MAX_DIARIAS,
+    MOTIVOS,
     VALOR_DIARIA,
     Settings,
     get_settings,
@@ -101,6 +103,11 @@ def cadastros(usuario: Usuario = Depends(usuario_atual), db: Session = Depends(g
         "limite_solicitacao": str(LIMITE_SOLICITACAO),
         "categorias_viagem": [{"id": k, "rotulo": v} for k, v in CATEGORIAS_VIAGEM.items()],
         "valor_diaria": str(VALOR_DIARIA),
+        "motivos": MOTIVOS,
+        "locais_refeicao": [
+            {"id": chave, "rotulo": rotulo, "limite": str(limite)}
+            for chave, (rotulo, limite) in LOCAIS_REFEICAO.items()
+        ],
         "max_diarias": MAX_DIARIAS,
     }
 

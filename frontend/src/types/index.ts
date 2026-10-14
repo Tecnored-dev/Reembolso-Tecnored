@@ -83,6 +83,10 @@ export interface Cadastros {
   limite_refeicao_dia: string
   limite_solicitacao: string
   categorias_viagem: { id: CategoriaViagem; rotulo: string }[]
+  /** Motivos da despesa (lista do ARGO) — alimentação e despesas diversas */
+  motivos: string[]
+  /** Onde foi a refeição (só alimentação): define o limite do alerta */
+  locais_refeicao: { id: string; rotulo: string; limite: string }[]
   /** Adiantamento: valor de uma diária e máximo de diárias por pedido */
   valor_diaria: string
   max_diarias: number
@@ -152,6 +156,11 @@ export interface Solicitacao extends SolicitacaoResumo {
   empresa: string
   gestor_email: string | null
   pula_gestor: boolean
+  /** Alimentação e despesas diversas (nulo em pedidos antigos) */
+  motivo: string | null
+  /** Só alimentação: pinda, maraba ou outro */
+  local_refeicao: string | null
+  local_refeicao_rotulo: string | null
   viagem_inicio: string | null
   viagem_fim: string | null
   /** Só no adiantamento: o valor adiantado é `valor_total` */

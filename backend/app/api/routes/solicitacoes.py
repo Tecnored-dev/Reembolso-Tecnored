@@ -18,6 +18,7 @@ from app.config import (
     ARQUIVO_TAMANHO_MAX,
     CATEGORIAS_ANTIGAS,
     CATEGORIAS_VIAGEM,
+    LOCAIS_REFEICAO,
     VALOR_DIARIA,
     Settings,
     get_settings,
@@ -137,6 +138,7 @@ def _resumo(sol: Solicitacao) -> dict:
         "criado_por_email": sol.criado_por_email,
         "gestor_nome": sol.gestor_nome,
         "descricao": sol.descricao,
+        "motivo": sol.motivo,
         "destino": sol.destino,
         "valor_total": str(sol.valor_total),
         "moeda": sol.moeda,
@@ -155,6 +157,12 @@ def _completo(sol: Solicitacao, usuario: Usuario) -> dict:
         "empresa": sol.empresa,
         "gestor_email": sol.gestor_email,
         "pula_gestor": sol.pula_gestor,
+        "local_refeicao": sol.local_refeicao,
+        "local_refeicao_rotulo": (
+            LOCAIS_REFEICAO[sol.local_refeicao][0]
+            if sol.local_refeicao in LOCAIS_REFEICAO
+            else None
+        ),
         "viagem_inicio": _iso(sol.viagem_inicio),
         "viagem_fim": _iso(sol.viagem_fim),
         "diarias": sol.diarias,
@@ -226,7 +234,13 @@ def _iso(valor) -> str | None:
 # Entrada de formulário (multipart, por causa do arquivo)
 # ---------------------------------------------------------------------------
 def _dados(
-    data_despesa: str, valor: str, descricao: str, empresa_id: int, gestor_email: str | None
+    data_despesa: str,
+    valor: str,
+    descricao: str,
+    empresa_id: int,
+    gestor_email: str | None,
+    motivo: str = "",
+    local: str = "",
 ) -> fluxo.DadosAlimentacao:
     try:
         data = date.fromisoformat(data_despesa)
@@ -238,6 +252,8 @@ def _dados(
         descricao=descricao,
         empresa_id=empresa_id,
         gestor_email=(gestor_email or "").strip().lower() or None,
+        motivo=motivo.strip(),
+        local=local.strip(),
     )
 
 
@@ -333,6 +349,8 @@ async def criar_alimentacao(
     descricao: str = Form(...),
     empresa_id: int = Form(...),
     gestor_email: str | None = Form(None),
+    motivo: str = Form(""),
+    local_refeicao: str = Form(""),
     # Pedido em nome de outra pessoa (opcional; só o e-mail liga a opção).
     beneficiario_email: str = Form(""),
     beneficiario_nome: str = Form(""),
@@ -345,7 +363,7 @@ async def criar_alimentacao(
     armazenamento: Armazenamento = Depends(get_armazenamento),
 ):
     dados = replace(
-        _dados(data_despesa, valor, descricao, empresa_id, gestor_email),
+        _dados(data_despesa, valor, descricao, empresa_id, gestor_email, motivo, local_refeicao),
         beneficiario=_beneficiario_form(
             beneficiario_email,
             beneficiario_nome,
@@ -365,6 +383,7 @@ async def criar_diversas(
     descricao: str = Form(...),
     empresa_id: int = Form(...),
     gestor_email: str | None = Form(None),
+    motivo: str = Form(""),
     beneficiario_email: str = Form(""),
     beneficiario_nome: str = Form(""),
     beneficiario_matricula: str = Form(""),
@@ -377,7 +396,7 @@ async def criar_diversas(
 ):
     """Despesas diversas: mesmo formulário e fluxo da alimentação (corrige em /reenviar)."""
     dados = replace(
-        _dados(data_despesa, valor, descricao, empresa_id, gestor_email),
+        _dados(data_despesa, valor, descricao, empresa_id, gestor_email, motivo),
         beneficiario=_beneficiario_form(
             beneficiario_email,
             beneficiario_nome,
@@ -532,13 +551,15 @@ async def reenviar(
     descricao: str = Form(...),
     empresa_id: int = Form(...),
     gestor_email: str | None = Form(None),
+    motivo: str = Form(""),
+    local_refeicao: str = Form(""),
     arquivo: UploadFile | None = File(None),
     usuario: Usuario = Depends(usuario_atual),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
     armazenamento: Armazenamento = Depends(get_armazenamento),
 ):
-    dados = _dados(data_despesa, valor, descricao, empresa_id, gestor_email)
+    dados = _dados(data_despesa, valor, descricao, empresa_id, gestor_email, motivo, local_refeicao)
     validado = await _arquivo(arquivo)
     sol = fluxo.reenviar(db, settings, armazenamento, usuario, sol_id, dados, validado)
     return _completo(sol, usuario)

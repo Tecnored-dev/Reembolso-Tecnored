@@ -59,6 +59,8 @@ export default function AlimentacaoFormPage({ tipo: tipoPedido = 'alimentacao' }
   const [data, setData] = useState(hojeISO())
   const [valor, setValor] = useState('')
   const [descricao, setDescricao] = useState('')
+  const [motivo, setMotivo] = useState('')
+  const [local, setLocal] = useState('')
   const [empresa, setEmpresa] = useState('')
   const [gestor, setGestor] = useState('')
   const [arquivo, setArquivo] = useState<File | null>(null)
@@ -89,6 +91,8 @@ export default function AlimentacaoFormPage({ tipo: tipoPedido = 'alimentacao' }
       setData(s.despesas[0]?.data_despesa ?? hojeISO())
       setValor(Number(s.valor_total).toFixed(2).replace('.', ','))
       setDescricao(s.descricao)
+      setMotivo(s.motivo ?? '')
+      setLocal(s.local_refeicao ?? '')
       setEmpresa(String(cadastros.empresas.find((e) => e.nome === s.empresa)?.id ?? ''))
       setGestor(s.gestor_email ?? '')
     })
@@ -104,7 +108,9 @@ export default function AlimentacaoFormPage({ tipo: tipoPedido = 'alimentacao' }
     return () => URL.revokeObjectURL(url)
   }, [arquivo])
 
-  const limite = Number(cadastros?.limite_refeicao_dia ?? 0)
+  // O limite depende de onde foi a refeição (Pinda R$ 40, Marabá R$ 45, outro R$ 135).
+  const localEscolhido = cadastros?.locais_refeicao.find((l) => l.id === local)
+  const limite = Number(localEscolhido?.limite ?? cadastros?.limite_refeicao_dia ?? 0)
   const numero = useMemo(() => lerValor(valor), [valor])
   // Na correção, o tipo é o do pedido devolvido.
   const tipo: TipoUmaNota = original?.tipo === 'diversas' ? 'diversas' : tipoPedido
@@ -123,6 +129,8 @@ export default function AlimentacaoFormPage({ tipo: tipoPedido = 'alimentacao' }
     form.append('data_despesa', data)
     form.append('valor', valor)
     form.append('descricao', descricao)
+    form.append('motivo', motivo)
+    if (tipo === 'alimentacao') form.append('local_refeicao', local)
     form.append('empresa_id', empresa)
     if (!pulaGestor) form.append('gestor_email', gestor)
     if (!corrigindo)
@@ -211,10 +219,38 @@ export default function AlimentacaoFormPage({ tipo: tipoPedido = 'alimentacao' }
           </div>
         </div>
 
+        <div className={ui.grade}>
+          <div className={ui.campo}>
+            <label htmlFor="motivo">Motivo</label>
+            <select id="motivo" value={motivo} onChange={(e) => setMotivo(e.target.value)} required>
+              <option value="">Selecione…</option>
+              {cadastros?.motivos.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </select>
+          </div>
+          {tipo === 'alimentacao' && (
+            <div className={ui.campo}>
+              <label htmlFor="local">Onde foi a refeição?</label>
+              <select id="local" value={local} onChange={(e) => setLocal(e.target.value)} required>
+                <option value="">Selecione…</option>
+                {cadastros?.locais_refeicao.map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.rotulo} — limite {formatarMoeda(l.limite)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+        </div>
+
         {acimaDoLimite && (
           <div className={ui.aviso}>
-            Acima do limite diário de refeição da política ({formatarMoeda(limite)}). Você pode
-            enviar mesmo assim — o financeiro vai ver o alerta.
+            Acima do limite diário de refeição da política
+            {localEscolhido && local !== 'outro' ? ` para ${localEscolhido.rotulo}` : ''} (
+            {formatarMoeda(limite)}). Você pode enviar mesmo assim — o financeiro vai ver o alerta.
           </div>
         )}
 

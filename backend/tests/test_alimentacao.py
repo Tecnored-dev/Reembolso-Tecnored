@@ -38,6 +38,8 @@ def enviar(
         "data_despesa": extra.get("data_despesa", date.today().isoformat()),
         "valor": valor,
         "descricao": extra.get("descricao", "Almoço com cliente"),
+        "motivo": extra.get("motivo", "Visita técnica"),
+        "local_refeicao": extra.get("local_refeicao", "outro"),
         "empresa_id": extra.get("empresa_id", "1"),
     }
     if gestor:
@@ -143,6 +145,8 @@ def test_devolucao_do_gestor_volta_para_conferencia(cenario):
             "data_despesa": date.today().isoformat(),
             "valor": "50,00",
             "descricao": "Almoço (nota nova)",
+            "motivo": "Visita técnica",
+            "local_refeicao": "outro",
             "empresa_id": "1",
             "gestor_email": GESTOR,
         },
@@ -167,6 +171,8 @@ def test_financeiro_pode_devolver_e_reenviar_sem_trocar_arquivo(cenario):
             "data_despesa": date.today().isoformat(),
             "valor": "45,90",
             "descricao": "Almoço",
+            "motivo": "Visita técnica",
+            "local_refeicao": "outro",
             "empresa_id": "1",
             "gestor_email": GESTOR,
         },
@@ -307,3 +313,72 @@ def test_empresa_inativa_nao_aceita(cenario):
     entrar(cenario, COLAB)
     r = enviar(cenario, empresa_id="2")  # TECNORED MARABA, inativa desde 13/10
     assert r.status_code == 400 and "Empresa de débito inválida" in r.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# Motivo e local da refeição (Thais, 09/10/2026)
+# ---------------------------------------------------------------------------
+def test_motivo_obrigatorio_e_da_lista(cenario):
+    entrar(cenario, COLAB)
+    assert "Escolha o motivo" in enviar(cenario, motivo="").json()["detail"]
+    assert "Escolha o motivo" in enviar(cenario, motivo="Churrasco").json()["detail"]
+    sol = enviar(cenario, motivo="Reunião comercial").json()
+    assert sol["motivo"] == "Reunião comercial"
+
+
+def test_local_obrigatorio_e_da_lista(cenario):
+    entrar(cenario, COLAB)
+    assert "onde foi a refeição" in enviar(cenario, local_refeicao="").json()["detail"]
+    assert "onde foi a refeição" in enviar(cenario, local_refeicao="paris").json()["detail"]
+
+
+@pytest.mark.parametrize(
+    ("local", "valor", "alerta"),
+    [
+        ("pinda", "40,00", None),
+        ("pinda", "40,01", "Pindamonhangaba (deslocamento local) (R$ 40,00)"),
+        ("maraba", "45,00", None),
+        ("maraba", "45,01", "Marabá (deslocamento local) (R$ 45,00)"),
+        ("outro", "135,00", None),
+        ("outro", "135,01", "(R$ 135,00)"),
+    ],
+)
+def test_limite_conforme_o_local(cenario, local, valor, alerta):
+    entrar(cenario, COLAB)
+    sol = enviar(cenario, local_refeicao=local, valor=valor).json()
+    assert sol["local_refeicao"] == local
+    if alerta is None:
+        assert sol["alerta_limite"] is None
+    else:
+        assert alerta in sol["alerta_limite"]
+
+
+def test_correcao_troca_local_e_motivo(cenario):
+    sol = criar(cenario, local_refeicao="pinda", valor="42,00")
+    assert sol["alerta_limite"]  # acima de R$ 40
+    assert sol["local_refeicao_rotulo"] == "Pindamonhangaba (deslocamento local)"
+    decidir(cenario, sol["id"], "conferir", THAIS, "financeiro", False, "Foi fora de Pinda")
+    entrar(cenario, COLAB)
+    r = cenario.post(
+        f"/api/solicitacoes/{sol['id']}/reenviar",
+        data={
+            "data_despesa": date.today().isoformat(),
+            "valor": "42,00",
+            "descricao": "Almoço com cliente",
+            "motivo": "Trabalho externo",
+            "local_refeicao": "outro",
+            "empresa_id": "1",
+            "gestor_email": GESTOR,
+        },
+    )
+    corpo = r.json()
+    assert r.status_code == 200, r.text
+    assert corpo["local_refeicao"] == "outro" and corpo["motivo"] == "Trabalho externo"
+    assert corpo["alerta_limite"] is None
+
+
+def test_cadastros_trazem_motivos_e_locais(cenario):
+    dados = cenario.get("/api/cadastros").json()
+    assert dados["motivos"][0] == "Despesas cartório" and "Visita técnica" in dados["motivos"]
+    assert [loc["id"] for loc in dados["locais_refeicao"]] == ["pinda", "maraba", "outro"]
+    assert dados["locais_refeicao"][0]["limite"] == "40.00"

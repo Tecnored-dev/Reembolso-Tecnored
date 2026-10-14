@@ -21,6 +21,7 @@ def enviar(cliente, valor="189,90", descricao="Carregador de notebook", **extra)
         "data_despesa": HOJE,
         "valor": valor,
         "descricao": descricao,
+        "motivo": "Trabalho externo",
         "empresa_id": "1",
         "gestor_email": GESTOR,
         **extra,
@@ -72,6 +73,7 @@ def test_validacoes_iguais_a_alimentacao(cenario):
             "data_despesa": HOJE,
             "valor": "10",
             "descricao": "x",
+            "motivo": "Outros",
             "empresa_id": "1",
             "gestor_email": GESTOR,
         },
@@ -91,6 +93,7 @@ def test_correcao_pela_mesma_rota_da_alimentacao(cenario):
             "data_despesa": HOJE,
             "valor": "179,90",
             "descricao": "Carregador de notebook",
+            "motivo": "Trabalho externo",
             "empresa_id": "1",
             "gestor_email": GESTOR,
         },
@@ -115,3 +118,10 @@ def test_em_nome_de_outra_pessoa(cenario):
     assert r.status_code == 201, r.text
     assert r.json()["solicitante_nome"] == "Pessoa da TI"
     assert r.json()["criado_por_email"] == COLAB
+
+
+def test_diversas_tem_motivo_mas_nao_local(cenario):
+    entrar(cenario, COLAB)
+    assert "Escolha o motivo" in enviar(cenario, motivo="").json()["detail"]
+    sol = enviar(cenario, motivo="Despesas correio").json()
+    assert sol["motivo"] == "Despesas correio" and sol["local_refeicao"] is None

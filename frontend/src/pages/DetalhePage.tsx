@@ -579,10 +579,24 @@ export default function DetalhePage() {
                 )}
               </>
             ) : (
-              <div>
-                <dt>Data da despesa</dt>
-                <dd>{formatarData(sol.despesas[0]?.data_despesa ?? null)}</dd>
-              </div>
+              <>
+                <div>
+                  <dt>Data da despesa</dt>
+                  <dd>{formatarData(sol.despesas[0]?.data_despesa ?? null)}</dd>
+                </div>
+                {sol.motivo && (
+                  <div>
+                    <dt>Motivo</dt>
+                    <dd>{sol.motivo}</dd>
+                  </div>
+                )}
+                {sol.local_refeicao_rotulo && (
+                  <div>
+                    <dt>Local da refeição</dt>
+                    <dd>{sol.local_refeicao_rotulo}</dd>
+                  </div>
+                )}
+              </>
             )}
             {sol.data_pagamento && (
               <div>
