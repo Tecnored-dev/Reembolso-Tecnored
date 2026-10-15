@@ -137,7 +137,7 @@ export default function AdiantamentoFormPage() {
           <p className={ui.muted}>
             {benef.ativo && benef.email.trim()
               ? `Em nome de ${benef.conhecido?.nome ?? (benef.nome || benef.email.trim())}`
-              : `${perfil.matricula} · ${perfil.centro_custo?.rotulo ?? ''}`}
+              : `Matrícula ${perfil.matricula}`}
           </p>
         </div>
       </div>
@@ -259,13 +259,7 @@ export default function AdiantamentoFormPage() {
           <span className={ui.ajuda}>{descricao.length}/500</span>
         </div>
 
-        {!corrigindo && (
-          <BeneficiarioCampos
-            valor={benef}
-            onChange={setBenef}
-            centros={cadastros?.centros_custo ?? []}
-          />
-        )}
+        {!corrigindo && <BeneficiarioCampos valor={benef} onChange={setBenef} />}
 
         <div className={ui.grade}>
           <div className={ui.campo}>

@@ -37,6 +37,11 @@
   color: #4b5563;
 }
 
+.recusado {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
 /* Adiantamento: mesmas cores das etapas equivalentes */
 .prestacao_em_conferencia,
 .devolucao_em_conferencia {

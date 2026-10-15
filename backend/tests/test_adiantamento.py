@@ -8,7 +8,7 @@ from datetime import date, timedelta
 import pytest
 from sqlalchemy import select
 
-from app.models import Despesa, Notificacao
+from app.models import Despesa, Notificacao, Solicitacao
 from app.services.fluxo import calcular_diarias, processar_expiracoes
 from app.storage import ArquivoNaoEncontrado
 from tests.test_alimentacao import (
@@ -181,13 +181,37 @@ def test_gestor_pedindo_vai_direto_para_pagamento(cenario, db):
     assert [n.para for n in avisos(db, sol["id"])] == [THAIS]
 
 
-def test_gestor_devolve_e_colaborador_corrige(cenario):
-    sol = criar_adiantamento(cenario)
-    r = decidir(cenario, sol["id"], "aprovar", GESTOR, "gestor", aprovar=False)
-    assert r.status_code == 400  # devolver exige comentário
-    r = decidir(cenario, sol["id"], "aprovar", GESTOR, "gestor", False, "Volta um dia antes")
-    assert r.json()["status"] == "devolvido"
+def devolvido_antigo(db, sol_id: int) -> None:
+    """Pedido devolvido pelo gestor ANTES de 15/10 (hoje o gestor só recusa)."""
+    sol = db.get(Solicitacao, sol_id)
+    sol.status, sol.devolvido_por, sol.motivo_devolucao = "devolvido", "Gestor", "Volta antes"
+    db.commit()
 
+
+def test_gestor_recusa_e_o_pedido_termina(cenario):
+    sol = criar_adiantamento(cenario)
+    entrar(cenario, GESTOR, "gestor")
+    assert cenario.get(f"/api/solicitacoes/{sol['id']}").json()["acoes"] == [
+        "aprovar",
+        "recusar",
+    ]
+    r = decidir(cenario, sol["id"], "aprovar", GESTOR, "gestor", aprovar=False)
+    assert r.status_code == 400 and "motivo da recusa" in r.json()["detail"]
+    r = decidir(cenario, sol["id"], "aprovar", GESTOR, "gestor", False, "Viagem cancelada")
+    recusado = r.json()
+    assert recusado["status"] == "recusado"
+    assert recusado["status_rotulo"] == "Finalizado - Recusado"
+    assert recusado["recusado_por"] == "gestor" and recusado["motivo_recusa"] == "Viagem cancelada"
+
+    entrar(cenario, COLAB, "")
+    assert cenario.get(f"/api/solicitacoes/{sol['id']}").json()["acoes"] == []
+    r = cenario.post(f"/api/solicitacoes/{sol['id']}/reenviar-adiantamento", json=pedido())
+    assert r.status_code == 400
+
+
+def test_pedido_devolvido_antes_da_mudanca_ainda_pode_ser_corrigido(cenario, db):
+    sol = criar_adiantamento(cenario)
+    devolvido_antigo(db, sol["id"])
     entrar(cenario, COLAB, "")
     assert cenario.get(f"/api/solicitacoes/{sol['id']}").json()["acoes"] == ["reenviar"]
     novo_fim = (FIM - timedelta(days=1)).isoformat()
@@ -216,9 +240,9 @@ def test_thais_nao_confere_o_pedido_e_paga_sem_nota(cenario):
     assert cenario.get(f"/api/solicitacoes/{sol['id']}").json()["acoes"] == ["prestar_contas"]
 
 
-def test_rotas_de_outros_tipos_nao_servem_para_adiantamento(cenario):
+def test_rotas_de_outros_tipos_nao_servem_para_adiantamento(cenario, db):
     sol = criar_adiantamento(cenario)
-    decidir(cenario, sol["id"], "aprovar", GESTOR, "gestor", False, "Corrigir")
+    devolvido_antigo(db, sol["id"])
     entrar(cenario, COLAB, "")
     r = cenario.post(
         f"/api/solicitacoes/{sol['id']}/reenviar-viagem",
@@ -404,14 +428,13 @@ def test_gasto_a_mais_gestor_aprova_e_thais_paga_a_diferenca(cenario, db):
     assert final["data_pagamento"] == HOJE.isoformat()
 
 
-def test_gestor_devolve_a_diferenca_e_volta_para_a_conferencia(cenario):
+def test_gestor_recusa_a_diferenca_e_o_pedido_termina(cenario):
     sol = prestacao_conferida(cenario, ["500,00"])
     r = decidir(cenario, sol["id"], "aprovar", GESTOR, "gestor", False, "Hotel acima da política")
-    assert r.json()["status"] == "prestacao_devolvida"
+    assert r.json()["status"] == "recusado"
+    assert r.json()["motivo_recusa"] == "Hotel acima da política"
     entrar(cenario, COLAB, "")
-    atual = cenario.get(f"/api/solicitacoes/{sol['id']}").json()
-    r = prestar(cenario, sol["id"], [nota("refeicao", "400,00", id=atual["despesas"][0]["id"])], [])
-    assert r.json()["status"] == "prestacao_em_conferencia"
+    assert cenario.get(f"/api/solicitacoes/{sol['id']}").json()["acoes"] == []
 
 
 def test_gestor_com_gasto_a_mais_vai_direto_para_pagamento(cenario):
@@ -485,7 +508,7 @@ def test_pedido_devolvido_expira_como_os_outros(cenario, db, settings):
     from datetime import datetime
 
     sol = criar_adiantamento(cenario)
-    decidir(cenario, sol["id"], "aprovar", GESTOR, "gestor", False, "Corrigir datas")
+    devolvido_antigo(db, sol["id"])
     resultado = processar_expiracoes(db, settings, agora=datetime(2030, 1, 1))
     assert resultado["cancelamentos"] == 1
 
@@ -520,9 +543,9 @@ def test_diaria_complementar_invalida(cenario, valor):
     assert r.status_code == 400, r.text
 
 
-def test_correcao_troca_complementar_por_diarias_normais(cenario):
+def test_correcao_troca_complementar_por_diarias_normais(cenario, db):
     sol = criar_adiantamento(cenario, diaria_complementar="250,00")
-    decidir(cenario, sol["id"], "aprovar", GESTOR, "gestor", False, "Você não recebe auxílio")
+    devolvido_antigo(db, sol["id"])
     entrar(cenario, COLAB, "")
     r = cenario.post(f"/api/solicitacoes/{sol['id']}/reenviar-adiantamento", json=pedido())
     assert r.json()["diaria_complementar"] is False and r.json()["valor_total"] == "405.00"

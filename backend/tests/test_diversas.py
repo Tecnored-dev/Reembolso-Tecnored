@@ -23,6 +23,7 @@ def enviar(cliente, valor="189,90", descricao="Carregador de notebook", **extra)
         "descricao": descricao,
         "motivo": "Trabalho externo",
         "empresa_id": "1",
+        "centro_custo_id": "1",
         "gestor_email": GESTOR,
         **extra,
     }

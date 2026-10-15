@@ -2,17 +2,17 @@ import { useEffect, useState } from 'react'
 import { precisaDosDados, type BeneficiarioForm } from '@/beneficiario'
 import { api } from '@/services/api'
 import ui from '@/styles/ui.module.css'
-import type { Opcao, UsuarioBusca } from '@/types'
+import type { UsuarioBusca } from '@/types'
 
 interface Props {
   valor: BeneficiarioForm
   onChange: (valor: BeneficiarioForm) => void
-  centros: Opcao[]
 }
 
 // "Pedir em nome de outra pessoa": busca entre os colegas que já entraram no
-// sistema; se a pessoa nunca entrou, pede nome, matrícula e centro de custo.
-export default function BeneficiarioCampos({ valor, onChange, centros }: Props) {
+// sistema; se a pessoa nunca entrou, pede nome e matrícula. O centro de custo
+// é o do pedido (Thais, 15/10).
+export default function BeneficiarioCampos({ valor, onChange }: Props) {
   const [sugestoes, setSugestoes] = useState<UsuarioBusca[]>([])
   const termo = valor.email.trim()
 
@@ -77,7 +77,7 @@ export default function BeneficiarioCampos({ valor, onChange, centros }: Props) 
           </datalist>
           {valor.conhecido?.perfil_completo && (
             <span className={ui.ajuda}>
-              {valor.conhecido.nome}: os dados (matrícula e centro de custo) vêm do perfil dela.
+              {valor.conhecido.nome}: a matrícula vem do perfil dela.
             </span>
           )}
           {precisaDosDados(valor) && termo.includes('@') && (
@@ -106,22 +106,6 @@ export default function BeneficiarioCampos({ valor, onChange, centros }: Props) 
                     required
                   />
                 </div>
-              </div>
-              <div className={ui.campo}>
-                <label htmlFor="beneficiarioCentro">Centro de custo dela</label>
-                <select
-                  id="beneficiarioCentro"
-                  value={valor.centroCustoId}
-                  onChange={(e) => onChange({ ...valor, centroCustoId: e.target.value })}
-                  required
-                >
-                  <option value="">Selecione…</option>
-                  {centros.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.rotulo}
-                    </option>
-                  ))}
-                </select>
               </div>
             </>
           )}

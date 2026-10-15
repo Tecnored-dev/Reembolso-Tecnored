@@ -18,21 +18,19 @@ describe('pedido em nome de outra pessoa', () => {
     expect(precisaDosDados(b)).toBe(false)
     expect(camposBeneficiario(b)).toEqual({ beneficiario_email: 'bia@tecnored.com.br' })
   })
-  it('quem nunca entrou manda nome, matrícula e centro de custo', () => {
+  it('quem nunca entrou manda nome e matrícula', () => {
     const b = {
       ...BENEFICIARIO_VAZIO,
       ativo: true,
       email: 'novo@tecnored.com.br',
       nome: 'Novo',
       matricula: '77',
-      centroCustoId: '3',
     }
     expect(precisaDosDados(b)).toBe(true)
     expect(camposBeneficiario(b)).toEqual({
       beneficiario_email: 'novo@tecnored.com.br',
       beneficiario_nome: 'Novo',
       beneficiario_matricula: '77',
-      beneficiario_centro_custo_id: '3',
     })
   })
   it('descobre se a pessoa é gestora pela busca ou pela lista de gestores', () => {

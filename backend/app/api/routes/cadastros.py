@@ -31,8 +31,11 @@ router = APIRouter(prefix="/api", tags=["cadastros"])
 
 
 class PerfilEntrada(BaseModel):
+    """Perfil: só a matrícula (Thais, 15/10). O centro de custo é escolhido em
+    cada pedido; aqui ele é opcional e só serve de sugestão."""
+
     matricula: str = Field(min_length=1, max_length=30)
-    centro_custo_id: int
+    centro_custo_id: int | None = None
 
 
 def _perfil(db: Session, usuario: Usuario) -> CadastroUsuario:
@@ -75,15 +78,16 @@ def salvar_perfil(
     usuario: Usuario = Depends(usuario_atual),
     db: Session = Depends(get_db),
 ):
-    centro = db.get(CentroCusto, entrada.centro_custo_id)
-    if centro is None or not centro.ativo:
-        raise RegraNegocio("Centro de custo inválido.")
     matricula = entrada.matricula.strip()
     if not matricula:
         raise RegraNegocio("Informe a matrícula.")
     cadastro = _perfil(db, usuario)
+    if entrada.centro_custo_id is not None:
+        centro = db.get(CentroCusto, entrada.centro_custo_id)
+        if centro is None or not centro.ativo:
+            raise RegraNegocio("Centro de custo inválido.")
+        cadastro.centro_custo_id = centro.id
     cadastro.matricula = matricula
-    cadastro.centro_custo_id = centro.id
     cadastro.atualizado_em = agora_utc()
     db.commit()
     db.refresh(cadastro)

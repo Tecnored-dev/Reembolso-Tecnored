@@ -50,7 +50,9 @@ class Solicitacao(Base):
     criado_por_email: Mapped[str | None] = mapped_column(String(254), nullable=True)
     criado_por_nome: Mapped[str | None] = mapped_column(String(200), nullable=True)
     matricula: Mapped[str] = mapped_column(String(30), nullable=False)
-    centro_custo: Mapped[str] = mapped_column(String(140), nullable=False)  # "3350 - T.I / T.A"
+    # Ex.: "3350 - T.I / T.A". Escolhido em cada pedido (Thais, 15/10); o
+    # adiantamento não tem centro de custo (nulo).
+    centro_custo: Mapped[str | None] = mapped_column(String(140), nullable=True)
     empresa: Mapped[str] = mapped_column(String(120), nullable=False)
 
     gestor_email: Mapped[str | None] = mapped_column(String(254), nullable=True)
@@ -102,6 +104,10 @@ class Solicitacao(Base):
     devolvido_em: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     motivo_devolucao: Mapped[str | None] = mapped_column(Text, nullable=True)
     lembrete_expiracao_em: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Recusa do gestor (Thais, 15/10): finaliza o pedido.
+    recusado_por: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    recusado_em: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    motivo_recusa: Mapped[str | None] = mapped_column(Text, nullable=True)
     cancelado_em: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     motivo_cancelamento: Mapped[str | None] = mapped_column(Text, nullable=True)
 
