@@ -1,10 +1,20 @@
 import { useCallback, useEffect, useState } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import type { Contexto } from '@/components/contexto'
+import Icone from '@/components/Icone'
 import { api, LOGOUT_URL } from '@/services/api'
 import type { AppConfig, Perfil, Session } from '@/types'
 import { formatVersion } from '@/utils'
 import styles from './Layout.module.css'
+
+// "Colaborador Teste" → "CT": aparece no lugar do nome no celular.
+function iniciais(nome: string) {
+  const partes = nome.trim().split(/\s+/).filter(Boolean)
+  if (partes.length === 0) return '?'
+  const primeira = partes[0][0]
+  const ultima = partes.length > 1 ? partes[partes.length - 1][0] : ''
+  return (primeira + ultima).toUpperCase()
+}
 
 // Moldura das telas autenticadas: cabeçalho, menu por papel e rodapé.
 // Sem sessão → volta para a tela de entrada. O perfil (matrícula e centro de
@@ -49,14 +59,20 @@ export default function Layout() {
     <div className={styles.page}>
       <header className={styles.header} style={{ background: config.bg_color }}>
         <div className={styles.marca}>
-          {config.title} <span>· Tecnored</span>
+          <img src="/tecnored-logo-branca.png" alt="Tecnored" className={styles.logo} />
+          <span className={styles.sep} aria-hidden="true" />
+          {config.title}
         </div>
         <div className={styles.usuario}>
-          <NavLink to="/perfil" className={styles.nomeUsuario} title="Meu perfil">
-            {session.name}
-          </NavLink>
           {config.env !== 'main' && <span className={styles.ambiente}>{config.env}</span>}
+          <NavLink to="/perfil" className={styles.nomeUsuario} title="Meu perfil">
+            <span className={styles.avatar} aria-hidden="true">
+              {iniciais(session.name)}
+            </span>
+            <span className={styles.nome}>{session.name}</span>
+          </NavLink>
           <a href={LOGOUT_URL} className={styles.sair}>
+            <Icone nome="sair" tamanho={18} />
             Sair
           </a>
         </div>
