@@ -41,6 +41,8 @@ export type Status =
   | 'pago'
   | 'devolvido'
   | 'cancelado'
+  // Recusa do gestor: final (Thais, 15/10)
+  | 'recusado'
   // Só do adiantamento de viagem (depois do pagamento das diárias)
   | 'aguardando_prestacao'
   | 'prestacao_em_conferencia'
@@ -55,6 +57,7 @@ export type Acao =
   | 'conferir'
   | 'devolver'
   | 'aprovar'
+  | 'recusar'
   | 'pagar'
   | 'reenviar'
   | 'prestar_contas'
@@ -72,7 +75,9 @@ export interface Perfil {
   email: string
   nome: string
   matricula: string | null
+  /** Último centro de custo usado num pedido: sugestão para o próximo */
   centro_custo: Opcao | null
+  /** Só a matrícula é obrigatória (Thais, 15/10) */
   completo: boolean
 }
 
@@ -152,7 +157,8 @@ export interface EventoHistorico {
 /** GET /api/solicitacoes/:id */
 export interface Solicitacao extends SolicitacaoResumo {
   matricula: string
-  centro_custo: string
+  /** Escolhido no pedido; o adiantamento não tem (nulo) */
+  centro_custo: string | null
   empresa: string
   gestor_email: string | null
   pula_gestor: boolean
@@ -190,6 +196,10 @@ export interface Solicitacao extends SolicitacaoResumo {
   data_pagamento: string | null
   motivo_devolucao: string | null
   devolvido_por: string | null
+  /** Recusa do gestor (final) */
+  recusado_por: string | null
+  recusado_em: string | null
+  motivo_recusa: string | null
   motivo_cancelamento: string | null
   despesas: Despesa[]
   historico: EventoHistorico[]

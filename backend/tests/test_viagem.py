@@ -48,6 +48,7 @@ def campos(notas, gestor=GESTOR, **extra):
         "viagem_fim": extra.get("viagem_fim", ONTEM.isoformat()),
         "descricao": extra.get("descricao", "Visita técnica à planta"),
         "empresa_id": "1",
+        "centro_custo_id": "1",
         "despesas": json.dumps(notas),
     }
     if gestor:

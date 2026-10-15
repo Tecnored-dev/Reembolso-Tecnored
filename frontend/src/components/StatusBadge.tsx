@@ -2,10 +2,12 @@ import type { Status } from '@/types'
 import styles from './StatusBadge.module.css'
 
 const CURTO: Record<Status, string> = {
-  em_conferencia: 'Em conferência',
-  aguardando_gestor: 'Com o gestor',
+  // Nomes do fluxo principal pedidos pela Thais (15/10).
+  em_conferencia: 'Pendente de conferência',
+  aguardando_gestor: 'Pendente de aprovação',
   aguardando_pagamento: 'Aguardando pagamento',
-  pago: 'Paga',
+  pago: 'Finalizado - Pago',
+  recusado: 'Finalizado - Recusado',
   devolvido: 'Devolvida',
   cancelado: 'Cancelada',
   aguardando_prestacao: 'Prestar contas',

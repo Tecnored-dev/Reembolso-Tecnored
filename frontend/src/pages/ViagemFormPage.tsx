@@ -6,7 +6,9 @@ import {
   camposBeneficiario,
   type BeneficiarioForm,
 } from '@/beneficiario'
+import { centroCustoInicial } from '@/centroCusto'
 import BeneficiarioCampos from '@/components/BeneficiarioCampos'
+import CentroCustoCampo from '@/components/CentroCustoCampo'
 import { useContexto } from '@/components/contexto'
 import NotasViagem from '@/components/NotasViagem'
 import { useApi } from '@/hooks/useApi'
@@ -42,6 +44,7 @@ export default function ViagemFormPage() {
   const [fim, setFim] = useState('')
   const [descricao, setDescricao] = useState('')
   const [empresa, setEmpresa] = useState('')
+  const [centroCusto, setCentroCusto] = useState('')
   const [gestor, setGestor] = useState('')
   const [notas, setNotas] = useState<NotaForm[]>(() => [novaNota()])
   const [erro, setErro] = useState<string | null>(null)
@@ -61,6 +64,12 @@ export default function ViagemFormPage() {
       setEmpresa(String(cadastros.empresas[0].id))
   }, [cadastros, corrigindo])
 
+  // Pedido novo: o centro de custo vem com o último usado (dá para trocar).
+  useEffect(() => {
+    if (!corrigindo && cadastros)
+      setCentroCusto((atual) => atual || centroCustoInicial(cadastros.centros_custo, perfil, null))
+  }, [cadastros, corrigindo, perfil])
+
   // Correção: carrega o que foi enviado para editar em cima.
   useEffect(() => {
     if (!id || !cadastros) return
@@ -72,10 +81,11 @@ export default function ViagemFormPage() {
       setFim(s.viagem_fim ?? '')
       setDescricao(s.descricao)
       setEmpresa(String(cadastros.empresas.find((e) => e.nome === s.empresa)?.id ?? ''))
+      setCentroCusto(centroCustoInicial(cadastros.centros_custo, perfil, s))
       setGestor(s.gestor_email ?? '')
       setNotas(notasEnviadas(s.despesas))
     })
-  }, [id, cadastros])
+  }, [id, cadastros, perfil])
 
   async function enviar(e: FormEvent) {
     e.preventDefault()
@@ -93,6 +103,7 @@ export default function ViagemFormPage() {
     form.append('viagem_fim', fim)
     form.append('descricao', descricao)
     form.append('empresa_id', empresa)
+    form.append('centro_custo_id', centroCusto)
     if (!pulaGestor) form.append('gestor_email', gestor)
     if (!corrigindo)
       for (const [campo, conteudo] of Object.entries(camposBeneficiario(benef)))
@@ -133,7 +144,7 @@ export default function ViagemFormPage() {
           <p className={ui.muted}>
             {benef.ativo && benef.email.trim()
               ? `Em nome de ${benef.conhecido?.nome ?? (benef.nome || benef.email.trim())}`
-              : `${perfil.matricula} · ${perfil.centro_custo?.rotulo ?? ''}`}
+              : `Matrícula ${perfil.matricula}`}
           </p>
         </div>
       </div>
@@ -187,13 +198,13 @@ export default function ViagemFormPage() {
           <span className={ui.ajuda}>{descricao.length}/500</span>
         </div>
 
-        {!corrigindo && (
-          <BeneficiarioCampos
-            valor={benef}
-            onChange={setBenef}
-            centros={cadastros?.centros_custo ?? []}
-          />
-        )}
+        {!corrigindo && <BeneficiarioCampos valor={benef} onChange={setBenef} />}
+
+        <CentroCustoCampo
+          centros={cadastros?.centros_custo ?? []}
+          valor={centroCusto}
+          onChange={setCentroCusto}
+        />
 
         <div className={ui.grade}>
           <div className={ui.campo}>

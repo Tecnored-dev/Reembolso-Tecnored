@@ -41,6 +41,7 @@ def enviar(
         "motivo": extra.get("motivo", "Visita técnica"),
         "local_refeicao": extra.get("local_refeicao", "outro"),
         "empresa_id": extra.get("empresa_id", "1"),
+        "centro_custo_id": extra.get("centro_custo_id", "1"),
     }
     if gestor:
         dados["gestor_email"] = gestor
@@ -129,13 +130,37 @@ def test_solicitante_gestor_pula_aprovacao(cenario):
     assert r.json()["status"] == "aguardando_pagamento"
 
 
-def test_devolucao_do_gestor_volta_para_conferencia(cenario):
+def test_recusa_do_gestor_finaliza(cenario, db, settings):
+    """Thais, 15/10: o gestor não devolve; recusar finaliza o pedido."""
     sol = criar(cenario)
     decidir(cenario, sol["id"], "conferir", THAIS, "financeiro")
     r = decidir(cenario, sol["id"], "aprovar", GESTOR, "gestor", aprovar=False)
-    assert r.status_code == 400  # devolver exige motivo
-    r = decidir(cenario, sol["id"], "aprovar", GESTOR, "gestor", False, "Nota ilegível")
-    assert r.json()["status"] == "devolvido" and r.json()["motivo_devolucao"] == "Nota ilegível"
+    assert r.status_code == 400 and "motivo da recusa" in r.json()["detail"]
+    r = decidir(cenario, sol["id"], "aprovar", GESTOR, "gestor", False, "Fora da política")
+    recusado = r.json()
+    assert recusado["status"] == "recusado" and recusado["status_rotulo"] == "Finalizado - Recusado"
+    assert recusado["recusado_por"] == "gestor" and recusado["motivo_recusa"] == "Fora da política"
+    assert recusado["acoes"] == []
+    assert [h["acao"] for h in recusado["historico"]][-1] == "recusado"
+
+    # O colaborador é avisado, não pode corrigir e o pedido não volta para fila nenhuma.
+    aviso = db.scalars(select(Notificacao).order_by(Notificacao.id.desc())).first()
+    assert aviso.para == COLAB and "recusada" in aviso.assunto
+    entrar(cenario, COLAB)
+    assert cenario.get(f"/api/solicitacoes/{sol['id']}").json()["acoes"] == []
+    assert decidir(cenario, sol["id"], "conferir", THAIS, "financeiro").status_code == 400
+    for fila in ("conferencia", "pagamento"):
+        assert cenario.get("/api/solicitacoes", params={"escopo": fila}).json() == []
+    # E não expira nem é cancelado depois.
+    from datetime import datetime
+
+    resultado = processar_expiracoes(db, settings, agora=datetime(2030, 1, 1))
+    assert resultado["cancelamentos"] == 0
+
+
+def test_reenvio_depois_da_devolucao_do_financeiro_troca_o_arquivo(cenario):
+    sol = criar(cenario)
+    decidir(cenario, sol["id"], "conferir", THAIS, "financeiro", False, "Nota ilegível")
 
     entrar(cenario, COLAB)
     antiga = cenario.storage.raiz.rglob("*.jpg").__next__()

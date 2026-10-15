@@ -72,7 +72,6 @@ class PedidoAdiantamento(BaseModel):
     beneficiario_email: str | None = Field(default=None, max_length=254)
     beneficiario_nome: str = Field(default="", max_length=200)
     beneficiario_matricula: str = Field(default="", max_length=30)
-    beneficiario_centro_custo_id: int | None = None
 
     def dados(self) -> fluxo.DadosAdiantamento:
         complementar = (self.diaria_complementar or "").strip()
@@ -82,7 +81,6 @@ class PedidoAdiantamento(BaseModel):
                 self.beneficiario_email,
                 self.beneficiario_nome,
                 self.beneficiario_matricula,
-                self.beneficiario_centro_custo_id,
             ),
             destino=self.destino,
             inicio=self.viagem_inicio,
@@ -96,28 +94,19 @@ class PedidoAdiantamento(BaseModel):
 _ROTULO_COMPROVANTE = "Comprovante da devolução"
 
 
-def _beneficiario_form(
-    email: str, nome: str, matricula: str, centro_custo_id: str
-) -> fluxo.Beneficiario | None:
+def _centro_custo_form(centro_custo_id: str) -> int | None:
+    """Centro de custo do pedido (Thais, 15/10). Vazio = não informado."""
     try:
-        centro = int(centro_custo_id) if centro_custo_id.strip() else None
+        return int(centro_custo_id) if centro_custo_id.strip() else None
     except ValueError:
         raise RegraNegocio("Centro de custo inválido.") from None
-    return _beneficiario(email, nome, matricula, centro)
 
 
-def _beneficiario(
-    email: str | None, nome: str, matricula: str, centro_custo_id: int | None
-) -> fluxo.Beneficiario | None:
+def _beneficiario(email: str | None, nome: str, matricula: str) -> fluxo.Beneficiario | None:
     """Pedido em nome de outra pessoa: só existe se o e-mail dela vier preenchido."""
     if not (email or "").strip():
         return None
-    return fluxo.Beneficiario(
-        email=email.strip(),
-        nome=nome or "",
-        matricula=matricula or "",
-        centro_custo_id=centro_custo_id,
-    )
+    return fluxo.Beneficiario(email=email.strip(), nome=nome or "", matricula=matricula or "")
 
 
 # ---------------------------------------------------------------------------
@@ -188,6 +177,9 @@ def _completo(sol: Solicitacao, usuario: Usuario) -> dict:
         "data_pagamento": _iso(sol.data_pagamento),
         "motivo_devolucao": sol.motivo_devolucao,
         "devolvido_por": sol.devolvido_por,
+        "recusado_por": sol.recusado_por,
+        "recusado_em": _iso(sol.recusado_em),
+        "motivo_recusa": sol.motivo_recusa,
         "motivo_cancelamento": sol.motivo_cancelamento,
         "despesas": [
             {
@@ -241,6 +233,7 @@ def _dados(
     gestor_email: str | None,
     motivo: str = "",
     local: str = "",
+    centro_custo_id: str = "",
 ) -> fluxo.DadosAlimentacao:
     try:
         data = date.fromisoformat(data_despesa)
@@ -254,6 +247,7 @@ def _dados(
         gestor_email=(gestor_email or "").strip().lower() or None,
         motivo=motivo.strip(),
         local=local.strip(),
+        centro_custo_id=_centro_custo_form(centro_custo_id),
     )
 
 
@@ -279,6 +273,7 @@ def _dados_viagem(
     empresa_id: int,
     gestor_email: str | None,
     despesas: str,
+    centro_custo_id: str = "",
 ) -> fluxo.DadosViagem:
     itens = _itens(despesas)
     inicio, fim = _datas(viagem_inicio, viagem_fim)
@@ -290,6 +285,7 @@ def _dados_viagem(
         empresa_id=empresa_id,
         gestor_email=(gestor_email or "").strip().lower() or None,
         itens=itens,
+        centro_custo_id=_centro_custo_form(centro_custo_id),
     )
 
 
@@ -355,7 +351,7 @@ async def criar_alimentacao(
     beneficiario_email: str = Form(""),
     beneficiario_nome: str = Form(""),
     beneficiario_matricula: str = Form(""),
-    beneficiario_centro_custo_id: str = Form(""),
+    centro_custo_id: str = Form(""),
     arquivo: UploadFile | None = File(None),
     usuario: Usuario = Depends(usuario_atual),
     db: Session = Depends(get_db),
@@ -363,13 +359,17 @@ async def criar_alimentacao(
     armazenamento: Armazenamento = Depends(get_armazenamento),
 ):
     dados = replace(
-        _dados(data_despesa, valor, descricao, empresa_id, gestor_email, motivo, local_refeicao),
-        beneficiario=_beneficiario_form(
-            beneficiario_email,
-            beneficiario_nome,
-            beneficiario_matricula,
-            beneficiario_centro_custo_id,
+        _dados(
+            data_despesa,
+            valor,
+            descricao,
+            empresa_id,
+            gestor_email,
+            motivo,
+            local_refeicao,
+            centro_custo_id,
         ),
+        beneficiario=_beneficiario(beneficiario_email, beneficiario_nome, beneficiario_matricula),
     )
     return await _criar_uma_nota(
         fluxo.TIPO_ALIMENTACAO, dados, arquivo, usuario, db, settings, armazenamento
@@ -387,7 +387,7 @@ async def criar_diversas(
     beneficiario_email: str = Form(""),
     beneficiario_nome: str = Form(""),
     beneficiario_matricula: str = Form(""),
-    beneficiario_centro_custo_id: str = Form(""),
+    centro_custo_id: str = Form(""),
     arquivo: UploadFile | None = File(None),
     usuario: Usuario = Depends(usuario_atual),
     db: Session = Depends(get_db),
@@ -396,13 +396,10 @@ async def criar_diversas(
 ):
     """Despesas diversas: mesmo formulário e fluxo da alimentação (corrige em /reenviar)."""
     dados = replace(
-        _dados(data_despesa, valor, descricao, empresa_id, gestor_email, motivo),
-        beneficiario=_beneficiario_form(
-            beneficiario_email,
-            beneficiario_nome,
-            beneficiario_matricula,
-            beneficiario_centro_custo_id,
+        _dados(
+            data_despesa, valor, descricao, empresa_id, gestor_email, motivo, "", centro_custo_id
         ),
+        beneficiario=_beneficiario(beneficiario_email, beneficiario_nome, beneficiario_matricula),
     )
     return await _criar_uma_nota(
         fluxo.TIPO_DIVERSAS, dados, arquivo, usuario, db, settings, armazenamento
@@ -440,7 +437,7 @@ async def criar_viagem(
     beneficiario_email: str = Form(""),
     beneficiario_nome: str = Form(""),
     beneficiario_matricula: str = Form(""),
-    beneficiario_centro_custo_id: str = Form(""),
+    centro_custo_id: str = Form(""),
     arquivos: list[UploadFile] = File([]),
     usuario: Usuario = Depends(usuario_atual),
     db: Session = Depends(get_db),
@@ -449,14 +446,16 @@ async def criar_viagem(
 ):
     dados = replace(
         _dados_viagem(
-            destino, viagem_inicio, viagem_fim, descricao, empresa_id, gestor_email, despesas
+            destino,
+            viagem_inicio,
+            viagem_fim,
+            descricao,
+            empresa_id,
+            gestor_email,
+            despesas,
+            centro_custo_id,
         ),
-        beneficiario=_beneficiario_form(
-            beneficiario_email,
-            beneficiario_nome,
-            beneficiario_matricula,
-            beneficiario_centro_custo_id,
-        ),
+        beneficiario=_beneficiario(beneficiario_email, beneficiario_nome, beneficiario_matricula),
     )
     validados = await _arquivos(arquivos)
     sol = fluxo.criar_viagem(db, settings, armazenamento, usuario, dados, validados)
@@ -553,13 +552,23 @@ async def reenviar(
     gestor_email: str | None = Form(None),
     motivo: str = Form(""),
     local_refeicao: str = Form(""),
+    centro_custo_id: str = Form(""),
     arquivo: UploadFile | None = File(None),
     usuario: Usuario = Depends(usuario_atual),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
     armazenamento: Armazenamento = Depends(get_armazenamento),
 ):
-    dados = _dados(data_despesa, valor, descricao, empresa_id, gestor_email, motivo, local_refeicao)
+    dados = _dados(
+        data_despesa,
+        valor,
+        descricao,
+        empresa_id,
+        gestor_email,
+        motivo,
+        local_refeicao,
+        centro_custo_id,
+    )
     validado = await _arquivo(arquivo)
     sol = fluxo.reenviar(db, settings, armazenamento, usuario, sol_id, dados, validado)
     return _completo(sol, usuario)
@@ -577,6 +586,7 @@ async def reenviar_viagem(
     empresa_id: int = Form(...),
     gestor_email: str | None = Form(None),
     despesas: str = Form(...),
+    centro_custo_id: str = Form(""),
     arquivos: list[UploadFile] = File([]),
     usuario: Usuario = Depends(usuario_atual),
     db: Session = Depends(get_db),
@@ -584,7 +594,14 @@ async def reenviar_viagem(
     armazenamento: Armazenamento = Depends(get_armazenamento),
 ):
     dados = _dados_viagem(
-        destino, viagem_inicio, viagem_fim, descricao, empresa_id, gestor_email, despesas
+        destino,
+        viagem_inicio,
+        viagem_fim,
+        descricao,
+        empresa_id,
+        gestor_email,
+        despesas,
+        centro_custo_id,
     )
     validados = await _arquivos(arquivos)
     sol = fluxo.reenviar_viagem(db, settings, armazenamento, usuario, sol_id, dados, validados)

@@ -10,9 +10,14 @@ Regras (Thais, 06/10/2026 — docs do projeto `fluxos-aprovacao.md`):
         │ devolve ─▶ DEVOLVIDO ─(colaborador corrige e reenvia)─▶ EM_CONFERENCIA
         ▼ ok
     AGUARDANDO_GESTOR (o gestor escolhido aprova)      ← pulado se o solicitante é gestor
-        │ devolve ─▶ DEVOLVIDO  (o reenvio volta para a conferência, nunca direto ao gestor)
+        │ recusa ─▶ RECUSADO (final: o colaborador abre um pedido novo — Thais, 15/10)
         ▼ aprova
-    AGUARDANDO_PAGAMENTO ─(financeiro paga e informa a data)─▶ PAGO
+    AGUARDANDO_PAGAMENTO ─(financeiro salva a data do pagamento)─▶ PAGO
+
+- O gestor não devolve para correção: só aprova ou recusa (Thais, 15/10). Quem
+  devolve para correção é o financeiro, na conferência.
+- O centro de custo é escolhido em cada pedido (não é mais do perfil); o
+  adiantamento não tem centro de custo (Thais, 15/10).
 
 - Depois de enviar, o colaborador não edita nem cancela; só corrige quando devolvido.
 - Devolvida e parada: lembrete 2 dias antes e cancelada depois de
@@ -28,7 +33,7 @@ Adiantamento (diárias = R$ 135 vezes os dias; regras de 06/10/2026):
      para quem recebe auxílio refeição)
     colaborador pede ─▶ AGUARDANDO_GESTOR ─(aprova)─▶ AGUARDANDO_PAGAMENTO
         (pulado se o solicitante é gestor)    (Thais paga SEM conferir: não há nota)
-        │ devolve ─▶ DEVOLVIDO ─(corrige)─▶ AGUARDANDO_GESTOR
+        │ recusa ─▶ RECUSADO (final)
     pago ─▶ AGUARDANDO_PRESTACAO ─(colaborador manda as notas)─▶ PRESTACAO_EM_CONFERENCIA
         │ Thais devolve ─▶ PRESTACAO_DEVOLVIDA ─(corrige)─▶ PRESTACAO_EM_CONFERENCIA
         ▼ Thais confere (o resumo vai para a Thais e o gestor)
@@ -37,7 +42,7 @@ Adiantamento (diárias = R$ 135 vezes os dias; regras de 06/10/2026):
         │            (se recusar o comprovante, volta para AGUARDANDO_DEVOLUCAO)
         ├─ bateu ──▶ ENCERRADO
         └─ faltou ─▶ DIFERENCA_AGUARDANDO_GESTOR ─(aprova)─▶ DIFERENCA_AGUARDANDO_PAGAMENTO
-                     (pulado se gestor)  │ devolve ─▶ PRESTACAO_DEVOLVIDA
+                     (pulado se gestor)  │ recusa ─▶ RECUSADO (final, sem a diferença)
                                          ─(Thais paga a diferença)─▶ ENCERRADO
 
 Prestação de contas: prazo de PRAZO_PRESTACAO_DIAS (60) depois da volta, com
@@ -107,6 +112,8 @@ AGUARDANDO_PAGAMENTO = "aguardando_pagamento"
 PAGO = "pago"
 DEVOLVIDO = "devolvido"
 CANCELADO = "cancelado"
+# Recusa do gestor: final (Thais, 15/10).
+RECUSADO = "recusado"
 # Só do adiantamento (depois do pagamento das diárias)
 AGUARDANDO_PRESTACAO = "aguardando_prestacao"
 PRESTACAO_EM_CONFERENCIA = "prestacao_em_conferencia"
@@ -118,10 +125,11 @@ DIFERENCA_AGUARDANDO_PAGAMENTO = "diferenca_aguardando_pagamento"
 ENCERRADO = "encerrado"
 
 ROTULO_STATUS = {
-    EM_CONFERENCIA: "Em conferência (financeiro)",
-    AGUARDANDO_GESTOR: "Aguardando aprovação do gestor",
-    AGUARDANDO_PAGAMENTO: "Aprovada — aguardando pagamento",
-    PAGO: "Paga",
+    EM_CONFERENCIA: "Pendente de conferência",
+    AGUARDANDO_GESTOR: "Pendente de aprovação",
+    AGUARDANDO_PAGAMENTO: "Aguardando pagamento",
+    PAGO: "Finalizado - Pago",
+    RECUSADO: "Finalizado - Recusado",
     DEVOLVIDO: "Devolvida para correção",
     CANCELADO: "Cancelada",
     AGUARDANDO_PRESTACAO: "Paga — aguardando prestação de contas",
@@ -150,13 +158,12 @@ SISTEMA = Usuario(email="sistema", nome="Sistema", papeis=(), via="sistema")
 class Beneficiario:
     """Pedido em nome de outra pessoa (Thais, 13/10): qualquer colaborador pode
     pedir; o dinheiro vai para o beneficiário e quem aprova é o gestor dele.
-    Matrícula, nome e centro de custo só são usados se o beneficiário ainda não
-    tiver o perfil completo no sistema (nunca entrou)."""
+    Nome e matrícula só são usados se o beneficiário ainda não tiver a
+    matrícula no sistema (nunca entrou). O centro de custo é o do pedido."""
 
     email: str
     nome: str = ""
     matricula: str = ""
-    centro_custo_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -166,7 +173,6 @@ class _Pessoa:
     email: str
     nome: str
     matricula: str
-    centro_custo: str
     eh_gestor: bool
     criado_por_email: str | None = None
     criado_por_nome: str | None = None
@@ -183,6 +189,8 @@ class DadosAlimentacao:
     motivo: str = ""
     # Só alimentação: chave de LOCAIS_REFEICAO (pinda, maraba, outro).
     local: str = ""
+    # Escolhido no pedido. Obrigatório ao criar; na correção, None mantém o atual.
+    centro_custo_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -226,6 +234,8 @@ class DadosViagem:
     gestor_email: str | None
     itens: tuple[ItemViagem, ...]
     beneficiario: Beneficiario | None = None
+    # Escolhido no pedido. Obrigatório ao criar; na correção, None mantém o atual.
+    centro_custo_id: int | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -305,7 +315,7 @@ def acoes_disponiveis(sol: Solicitacao, usuario: Usuario) -> list[str]:
     if sol.status in (EM_CONFERENCIA, PRESTACAO_EM_CONFERENCIA) and confere:
         acoes += ["conferir", "devolver"]
     if sol.status in FILA_GESTOR and usuario.tem(GESTOR) and sol.gestor_email == usuario.email:
-        acoes += ["aprovar", "devolver"]
+        acoes += ["aprovar", "recusar"]
     if sol.status in FILA_PAGAMENTO and financeiro:
         acoes.append("pagar")
     if sol.status == DEVOLVIDO and dono:
@@ -366,6 +376,7 @@ def criar_alimentacao(
     )
     _validar_basico(dados, tipo)
     empresa = _empresa(db, dados.empresa_id)
+    centro = _centro_custo(db, dados.centro_custo_id)
 
     sol = Solicitacao(
         tipo=tipo,
@@ -375,7 +386,7 @@ def criar_alimentacao(
         criado_por_email=pessoa.criado_por_email,
         criado_por_nome=pessoa.criado_por_nome,
         matricula=pessoa.matricula,
-        centro_custo=pessoa.centro_custo,
+        centro_custo=centro.rotulo,
         empresa=empresa.nome,
         gestor_email=gestor.email if gestor else None,
         gestor_nome=gestor.nome if gestor else None,
@@ -396,6 +407,7 @@ def criar_alimentacao(
     try:
         sol.despesas.append(_despesa(dados, arquivo, chave, agora, CATEGORIA_UMA_NOTA[tipo]))
         _registrar(db, sol, "enviado", None, EM_CONFERENCIA, usuario, None, agora)
+        _lembrar_centro_custo(db, usuario, centro)
         notificacoes.enfileirar(
             db,
             settings,
@@ -434,6 +446,8 @@ def reenviar(
         )
         sol.gestor_email, sol.gestor_nome = gestor.email, gestor.nome
     sol.empresa = _empresa(db, dados.empresa_id).nome
+    if dados.centro_custo_id is not None:
+        sol.centro_custo = _centro_custo(db, dados.centro_custo_id).rotulo
     sol.descricao = dados.descricao.strip()
     sol.valor_total = dados.valor
     sol.motivo = dados.motivo
@@ -498,6 +512,7 @@ def criar_viagem(
         )
     )
     empresa = _empresa(db, dados.empresa_id)
+    centro = _centro_custo(db, dados.centro_custo_id)
 
     sol = Solicitacao(
         tipo=TIPO_VIAGEM,
@@ -507,7 +522,7 @@ def criar_viagem(
         criado_por_email=pessoa.criado_por_email,
         criado_por_nome=pessoa.criado_por_nome,
         matricula=pessoa.matricula,
-        centro_custo=pessoa.centro_custo,
+        centro_custo=centro.rotulo,
         empresa=empresa.nome,
         gestor_email=gestor.email if gestor else None,
         gestor_nome=gestor.nome if gestor else None,
@@ -533,6 +548,7 @@ def criar_viagem(
             salvas.append(chave)
             sol.despesas.append(_despesa_viagem(item, arquivo, chave, agora))
         _registrar(db, sol, "enviado", None, EM_CONFERENCIA, usuario, None, agora)
+        _lembrar_centro_custo(db, usuario, centro)
         notificacoes.enfileirar(
             db,
             settings,
@@ -578,6 +594,8 @@ def reenviar_viagem(
         )
         sol.gestor_email, sol.gestor_nome = gestor.email, gestor.nome
     sol.empresa = _empresa(db, dados.empresa_id).nome
+    if dados.centro_custo_id is not None:
+        sol.centro_custo = _centro_custo(db, dados.centro_custo_id).rotulo
     sol.descricao = dados.descricao.strip()
     sol.destino = dados.destino.strip()
     sol.viagem_inicio, sol.viagem_fim = dados.inicio, dados.fim
@@ -783,7 +801,7 @@ def criar_adiantamento(
         criado_por_email=pessoa.criado_por_email,
         criado_por_nome=pessoa.criado_por_nome,
         matricula=pessoa.matricula,
-        centro_custo=pessoa.centro_custo,
+        centro_custo=None,  # adiantamento não tem centro de custo (Thais, 15/10)
         empresa=empresa.nome,
         gestor_email=gestor.email if gestor else None,
         gestor_nome=gestor.nome if gestor else None,
@@ -815,7 +833,9 @@ def reenviar_adiantamento(
     sol_id: int,
     dados: DadosAdiantamento,
 ) -> Solicitacao:
-    """Correção do pedido devolvido pelo gestor: volta para o gestor."""
+    """Correção de um pedido devolvido antes de 15/10 (o gestor devolvia).
+
+    Hoje o gestor só aprova ou recusa; fica para os pedidos antigos."""
     sol = obter(db, usuario, sol_id)
     _exigir(eh_dono(sol, usuario), "Só quem pediu pode corrigir.")
     _exigir_status(sol, DEVOLVIDO)
@@ -1114,8 +1134,7 @@ def _decidir_diferenca(
 ) -> Solicitacao:
     agora = agora_utc()
     if not aprovar:
-        # As notas precisam mudar: volta para o colaborador e depois para a Thais.
-        return _devolver(db, settings, sol, usuario, comentario, agora, para=PRESTACAO_DEVOLVIDA)
+        return _recusar(db, settings, sol, usuario, comentario, agora)
     sol.diferenca_aprovada_por, sol.diferenca_aprovada_em = usuario.nome, agora
     _mudar(
         db, sol, DIFERENCA_AGUARDANDO_PAGAMENTO, "diferenca_aprovada", usuario, comentario, agora
@@ -1315,7 +1334,7 @@ def decidir_gestor(
     _exigir_status(sol, AGUARDANDO_GESTOR)
     agora = agora_utc()
     if not aprovar:
-        return _devolver(db, settings, sol, usuario, comentario, agora)
+        return _recusar(db, settings, sol, usuario, comentario, agora)
 
     sol.aprovado_por, sol.aprovado_em = usuario.nome, agora
     _mudar(db, sol, AGUARDANDO_PAGAMENTO, "aprovado", usuario, comentario, agora)
@@ -1509,6 +1528,34 @@ def _devolver(
     return sol
 
 
+def _recusar(
+    db: Session,
+    settings: Settings,
+    sol: Solicitacao,
+    usuario: Usuario,
+    comentario: str | None,
+    agora: datetime,
+) -> Solicitacao:
+    """Recusa do gestor: finaliza o pedido (Thais, 15/10). Para tentar de novo,
+    o colaborador abre um pedido novo."""
+    motivo = (comentario or "").strip()
+    if not motivo:
+        raise RegraNegocio("Explique o motivo da recusa.")
+    sol.recusado_por, sol.recusado_em, sol.motivo_recusa = usuario.nome, agora, motivo
+    _mudar(db, sol, RECUSADO, "recusado", usuario, motivo, agora)
+    notificacoes.enfileirar(
+        db,
+        settings,
+        sol,
+        interessados(sol),
+        "Solicitação recusada pelo gestor",
+        f"{usuario.nome} recusou: {motivo}\nO pedido foi finalizado. "
+        "Se quiser tentar de novo, abra um pedido novo.",
+    )
+    db.commit()
+    return sol
+
+
 def _mudar(
     db: Session,
     sol: Solicitacao,
@@ -1566,13 +1613,12 @@ def _pessoa_do_pedido(
     """Quem recebe o reembolso: o próprio usuário ou o beneficiário informado."""
     if beneficiario is None or beneficiario.email.strip().lower() == usuario.email:
         perfil = db.scalar(select(CadastroUsuario).where(CadastroUsuario.email == usuario.email))
-        if perfil is None or not perfil.perfil_completo or perfil.centro_custo is None:
-            raise RegraNegocio("Complete seu perfil (matrícula e centro de custo) antes de pedir.")
+        if perfil is None or not perfil.perfil_completo:
+            raise RegraNegocio("Complete seu perfil (matrícula) antes de pedir.")
         return _Pessoa(
             email=usuario.email,
             nome=usuario.nome,
             matricula=perfil.matricula or "",
-            centro_custo=perfil.centro_custo.rotulo,
             eh_gestor=usuario.tem(GESTOR),
         )
 
@@ -1583,9 +1629,9 @@ def _pessoa_do_pedido(
     eh_gestor = (cadastro is not None and GESTOR in cadastro.lista_papeis) or (
         gestores.buscar(db, settings, email) is not None
     )
-    if cadastro is not None and cadastro.perfil_completo and cadastro.centro_custo:
+    if cadastro is not None and cadastro.perfil_completo:
         # Já usa o sistema: vale o perfil dela (o que foi digitado é ignorado).
-        nome, matricula, centro = cadastro.nome, cadastro.matricula or "", cadastro.centro_custo
+        nome, matricula = cadastro.nome, cadastro.matricula or ""
     else:
         nome = beneficiario.nome.strip() or (cadastro.nome if cadastro else "")
         matricula = beneficiario.matricula.strip()
@@ -1593,18 +1639,10 @@ def _pessoa_do_pedido(
             raise RegraNegocio("Informe o nome da pessoa do pedido.")
         if not matricula or len(matricula) > 30:
             raise RegraNegocio("Informe a matrícula da pessoa do pedido.")
-        centro = (
-            db.get(CentroCusto, beneficiario.centro_custo_id)
-            if beneficiario.centro_custo_id
-            else None
-        )
-        if centro is None or not centro.ativo:
-            raise RegraNegocio("Escolha o centro de custo da pessoa do pedido.")
     return _Pessoa(
         email=email,
         nome=nome,
         matricula=matricula,
-        centro_custo=centro.rotulo,
         eh_gestor=eh_gestor,
         criado_por_email=usuario.email,
         criado_por_nome=usuario.nome,
@@ -1645,6 +1683,21 @@ def _empresa(db: Session, empresa_id: int) -> Empresa:
     if empresa is None or not empresa.ativo:
         raise RegraNegocio("Empresa de débito inválida.")
     return empresa
+
+
+def _centro_custo(db: Session, centro_custo_id: int | None) -> CentroCusto:
+    centro = db.get(CentroCusto, centro_custo_id) if centro_custo_id else None
+    if centro is None or not centro.ativo:
+        raise RegraNegocio("Escolha o centro de custo.")
+    return centro
+
+
+def _lembrar_centro_custo(db: Session, usuario: Usuario, centro: CentroCusto) -> None:
+    """Guarda o último centro de custo usado por quem preencheu, para sugerir
+    no próximo pedido (Thais, 15/10: vem preenchido, mas dá para trocar)."""
+    cadastro = db.scalar(select(CadastroUsuario).where(CadastroUsuario.email == usuario.email))
+    if cadastro is not None:
+        cadastro.centro_custo_id = centro.id
 
 
 def _alerta(valor: Decimal, tipo: str = TIPO_ALIMENTACAO, local: str = "outro") -> str | None:

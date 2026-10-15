@@ -14,7 +14,8 @@ const ACAO_HISTORICO: Record<string, string> = {
   conferido: 'Conferiu',
   aprovado: 'Aprovou',
   devolvido: 'Devolveu para correção',
-  pago: 'Registrou o pagamento',
+  recusado: 'Recusou (pedido finalizado)',
+  pago: 'Salvou a data do pagamento',
   cancelado: 'Cancelou',
   prestacao_enviada: 'Enviou a prestação de contas',
   prestacao_reenviada: 'Corrigiu e reenviou a prestação de contas',
@@ -57,7 +58,9 @@ function etapasAdiantamento(s: Solicitacao): Etapa[] {
     { rotulo: 'Acerto', idx: 4 },
     { rotulo: 'Encerrada', idx: 5 },
   ]
-  const posicao = POSICAO_ADIANTAMENTO[s.status] ?? 0
+  // Recusado pelo gestor: parou no gestor (no pedido ou na diferença).
+  const posicao =
+    s.status === 'recusado' ? (s.valor_gasto !== null ? 4 : 0) : (POSICAO_ADIANTAMENTO[s.status] ?? 0)
   const fim = s.status === 'encerrado'
   return lista.map((e) => ({
     rotulo: e.rotulo,
@@ -77,8 +80,14 @@ function etapas(s: Solicitacao): Etapa[] {
     { chave: 'aguardando_pagamento', rotulo: 'Pagamento' },
     { chave: 'pago', rotulo: 'Paga' },
   ]
-  // Devolvida volta para a conferência; cancelada para onde parou.
-  const efetivo = s.status === 'devolvido' || s.status === 'cancelado' ? 'em_conferencia' : s.status
+  // Devolvida volta para a conferência; cancelada para onde parou; recusada
+  // parou no gestor.
+  const efetivo =
+    s.status === 'devolvido' || s.status === 'cancelado'
+      ? 'em_conferencia'
+      : s.status === 'recusado'
+        ? 'aguardando_gestor'
+        : s.status
   const posicao = ordem.indexOf(efetivo as Status)
   return lista.map((e) => {
     const idx = e.chave === 'enviada' ? -1 : ordem.indexOf(e.chave as Status)
@@ -215,7 +224,7 @@ export default function DetalhePage() {
         titulo: 'Aprovar a diferença',
         texto: `${sol.solicitante_nome} gastou ${formatarMoeda(
           -(saldo ?? 0)
-        )} a mais que o adiantado. O financeiro já conferiu as notas. Aprove a diferença ou devolva para correção.`,
+        )} a mais que o adiantado. O financeiro já conferiu as notas. Aprove a diferença ou recuse: recusar encerra o adiantamento sem pagar a diferença.`,
         ok: 'Aprovar a diferença',
       }
     if (adiantamento)
@@ -225,12 +234,13 @@ export default function DetalhePage() {
           sol.valor_complementar !== null
             ? ` + diária complementar de ${formatarMoeda(sol.valor_complementar)} (quem recebe auxílio refeição)`
             : ''
-        } para ${sol.destino}, pago antes da viagem. Depois, o colaborador presta contas com as notas.`,
+        } para ${sol.destino}, pago antes da viagem. Depois, o colaborador presta contas com as notas. Recusar encerra o pedido.`,
         ok: 'Aprovar',
       }
     return {
       titulo: 'Sua aprovação',
-      texto: 'O financeiro já conferiu a nota. Aprove ou devolva para correção.',
+      texto:
+        'O financeiro já conferiu a nota. Aprove ou recuse. Recusar encerra o pedido: para tentar de novo, o colaborador abre outro.',
       ok: 'Aprovar',
     }
   })()
@@ -341,6 +351,12 @@ export default function DetalhePage() {
             Cancelada: {sol.motivo_cancelamento}
           </div>
         )}
+        {sol.status === 'recusado' && (
+          <div className={ui.erro} style={{ marginTop: 16 }}>
+            <strong>Recusado pelo gestor {sol.recusado_por}:</strong> {sol.motivo_recusa}
+            <div>Este pedido foi finalizado. Para tentar de novo, abra um pedido novo.</div>
+          </div>
+        )}
         {sol.alerta_limite && (
           <div className={ui.aviso} style={{ marginTop: 12 }}>
             ⚠️ {sol.alerta_limite}
@@ -355,7 +371,9 @@ export default function DetalhePage() {
             {textoDecisao.texto}
           </p>
           <div className={ui.campo}>
-            <label htmlFor="comentario">Comentário (obrigatório para devolver)</label>
+            <label htmlFor="comentario">
+              Comentário (obrigatório para {decisao === 'aprovar' ? 'recusar' : 'devolver'})
+            </label>
             <textarea
               id="comentario"
               value={comentario}
@@ -377,7 +395,7 @@ export default function DetalhePage() {
               disabled={processando || !comentario.trim()}
               onClick={() => agir(decisao, { aprovar: false, comentario })}
             >
-              Devolver para correção
+              {decisao === 'aprovar' ? 'Recusar' : 'Devolver para correção'}
             </button>
           </div>
         </section>
@@ -398,6 +416,11 @@ export default function DetalhePage() {
               Sem nota por enquanto: a conferência é na prestação de contas, depois da viagem.
             </p>
           )}
+          <p className={ui.muted} style={{ marginBottom: 12 }}>
+            {adiantamento && sol.status === 'aguardando_pagamento'
+              ? 'Ao salvar a data, o adiantamento fica pago e o colaborador passa a prestar contas.'
+              : 'Ao salvar a data, o pedido é finalizado como pago.'}
+          </p>
           <div className={ui.botoes}>
             <div className={ui.campo}>
               <label htmlFor="dataPagamento">Data do pagamento</label>
@@ -414,11 +437,7 @@ export default function DetalhePage() {
               disabled={processando || !dataPagamento}
               onClick={() => agir('pagar', { data_pagamento: dataPagamento })}
             >
-              {sol.status === 'diferenca_aguardando_pagamento'
-                ? 'Marcar diferença como paga'
-                : adiantamento
-                  ? 'Marcar adiantamento como pago'
-                  : 'Marcar como paga'}
+              Salvar data de pagamento
             </button>
           </div>
           {erroAcao && <div className={ui.erro} style={{ marginTop: 12 }}>{erroAcao}</div>}
@@ -529,10 +548,12 @@ export default function DetalhePage() {
               <dt>Matrícula</dt>
               <dd>{sol.matricula}</dd>
             </div>
-            <div>
-              <dt>Centro de custo</dt>
-              <dd>{sol.centro_custo}</dd>
-            </div>
+            {sol.centro_custo && (
+              <div>
+                <dt>Centro de custo</dt>
+                <dd>{sol.centro_custo}</dd>
+              </div>
+            )}
             <div>
               <dt>Empresa de débito</dt>
               <dd>{sol.empresa}</dd>
