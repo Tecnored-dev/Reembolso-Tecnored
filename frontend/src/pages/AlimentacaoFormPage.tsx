@@ -225,6 +225,7 @@ export default function AlimentacaoFormPage({ tipo: tipoPedido = 'alimentacao' }
           <span className={ui.ajuda}>{descricao.length}/500</span>
         </div>
 
+        <h2 className={ui.blocoTitulo}>Notas</h2>
         <NotasViagem
           notas={notas}
           setNotas={setNotas}
@@ -234,6 +235,7 @@ export default function AlimentacaoFormPage({ tipo: tipoPedido = 'alimentacao' }
           categoriasRefeicao={CATEGORIAS_REFEICAO}
         />
 
+        <h2 className={ui.blocoTitulo}>Quem paga e quem aprova</h2>
         {!corrigindo && <BeneficiarioCampos valor={benef} onChange={setBenef} />}
 
         <CentroCustoCampo
@@ -284,7 +286,7 @@ export default function AlimentacaoFormPage({ tipo: tipoPedido = 'alimentacao' }
 
         {erro && <div className={ui.erro}>{erro}</div>}
 
-        <div className={ui.botoes}>
+        <div className={`${ui.botoes} ${ui.barraAcao}`}>
           <button className={ui.botao} disabled={enviando}>
             {enviando ? 'Enviando…' : corrigindo ? 'Reenviar para conferência' : 'Enviar'}
           </button>
