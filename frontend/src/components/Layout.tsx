@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
-import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import type { Contexto } from '@/components/contexto'
 import Icone from '@/components/Icone'
 import { api, LOGOUT_URL } from '@/services/api'
-import type { AppConfig, Perfil, Session } from '@/types'
+import type { AppConfig, Perfil, Session, SolicitacaoResumo } from '@/types'
 import { formatVersion } from '@/utils'
 import styles from './Layout.module.css'
 
@@ -24,7 +24,9 @@ export default function Layout() {
   const [config, setConfig] = useState<AppConfig | null>(null)
   const [session, setSession] = useState<Session | null>(null)
   const [perfil, setPerfil] = useState<Perfil | null>(null)
+  const [contadores, setContadores] = useState<Record<string, number>>({})
   const navigate = useNavigate()
+  const { pathname } = useLocation()
 
   const recarregarPerfil = useCallback(async () => {
     const res = await api.get<Perfil>('/api/perfil')
@@ -42,14 +44,31 @@ export default function Layout() {
       .catch(() => navigate('/', { replace: true })) // 401 — sem sessão
   }, [navigate, recarregarPerfil])
 
+  // Tamanho das filas que a pessoa trabalha (contador no menu). Busca de novo a
+  // cada troca de tela, para o número cair depois de conferir, aprovar ou pagar.
+  useEffect(() => {
+    if (!session) return
+    const escopos = [
+      session.papeis.includes('financeiro') && 'conferencia',
+      session.papeis.includes('gestor') && 'aprovacao',
+      session.papeis.includes('financeiro') && 'pagamento',
+    ].filter((e): e is string => !!e)
+    escopos.forEach((escopo) => {
+      api
+        .get<SolicitacaoResumo[]>(`/api/solicitacoes?escopo=${escopo}`)
+        .then((res) => setContadores((atual) => ({ ...atual, [escopo]: res.data.length })))
+        .catch(() => undefined) // sem contador: o menu continua funcionando
+    })
+  }, [session, pathname])
+
   if (!session || !config || !perfil) return <div className={styles.carregando}>Carregando…</div>
 
   const tem = (papel: Session['papeis'][number]) => session.papeis.includes(papel)
   const menu = [
     { para: '/inicio', rotulo: 'Meus reembolsos', mostrar: true },
-    { para: '/conferencia', rotulo: 'Conferência', mostrar: tem('financeiro') },
-    { para: '/aprovacoes', rotulo: 'Aprovações', mostrar: tem('gestor') },
-    { para: '/pagamentos', rotulo: 'Pagamentos', mostrar: tem('financeiro') },
+    { para: '/conferencia', rotulo: 'Conferência', mostrar: tem('financeiro'), fila: 'conferencia' },
+    { para: '/aprovacoes', rotulo: 'Aprovações', mostrar: tem('gestor'), fila: 'aprovacao' },
+    { para: '/pagamentos', rotulo: 'Pagamentos', mostrar: tem('financeiro'), fila: 'pagamento' },
     { para: '/todas', rotulo: 'Todas', mostrar: tem('financeiro') || tem('admin') },
   ].filter((item) => item.mostrar)
 
@@ -86,6 +105,14 @@ export default function Layout() {
             className={({ isActive }) => (isActive ? `${styles.item} ${styles.ativo}` : styles.item)}
           >
             {item.rotulo}
+            {item.fila && contadores[item.fila] > 0 && (
+              <span
+                className={styles.contador}
+                aria-label={`${contadores[item.fila]} ${contadores[item.fila] === 1 ? 'pedido' : 'pedidos'} na fila`}
+              >
+                {contadores[item.fila]}
+              </span>
+            )}
           </NavLink>
         ))}
       </nav>

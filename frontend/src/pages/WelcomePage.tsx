@@ -57,7 +57,7 @@ export default function WelcomePage() {
   return (
     <div className={styles.page} style={{ background: bgColor }}>
       <div className={styles.card}>
-        <div className={styles.logo}>Tecnored</div>
+        <img src="/tecnored-logo.png" alt="Tecnored" className={styles.logo} />
 
         <h1 className={styles.title}>{config?.title ?? 'Reembolso'}</h1>
 
@@ -77,7 +77,7 @@ export default function WelcomePage() {
         ) : (
           <>
             {authError && (
-              <p className={styles.errorNote}>
+              <p className={styles.errorNote} role="alert">
                 Não foi possível concluir o login ({authError}). Tente novamente.
               </p>
             )}
