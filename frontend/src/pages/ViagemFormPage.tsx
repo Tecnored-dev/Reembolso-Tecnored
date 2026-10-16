@@ -162,7 +162,7 @@ export default function ViagemFormPage() {
           Este pedido é do modelo antigo de viagem (com notas) e não pode ser corrigido aqui. Abra
           uma nova Diária de Viagem; as despesas com nota vão no Reembolso de despesas.
         </div>
-        <div className={ui.botoes}>
+        <div className={`${ui.botoes} ${ui.barraAcao}`}>
           <Link to="/nova/viagem" className={ui.botao}>
             Nova diária de viagem
           </Link>
@@ -227,7 +227,7 @@ export default function ViagemFormPage() {
 
         <fieldset className={ui.campo} style={{ border: 'none', padding: 0 }}>
           <legend style={{ fontWeight: 600, marginBottom: 6 }}>Viagem internacional?</legend>
-          <label style={{ fontWeight: 400 }}>
+          <label className={ui.opcao}>
             <input
               type="radio"
               name="internacional"
@@ -236,7 +236,7 @@ export default function ViagemFormPage() {
             />{' '}
             Não
           </label>
-          <label style={{ fontWeight: 400 }}>
+          <label className={ui.opcao}>
             <input
               type="radio"
               name="internacional"
@@ -266,7 +266,7 @@ export default function ViagemFormPage() {
           <span className={ui.ajuda}>{descricao.length}/500</span>
         </div>
 
-        <h2 className={ui.subtitulo}>Diárias</h2>
+        <h2 className={ui.blocoTitulo}>Diárias</h2>
         {linhas.map((linha, n) => (
           <div key={n} className={ui.grade} data-testid="linha-diaria">
             <div className={ui.campo}>
@@ -331,8 +331,9 @@ export default function ViagemFormPage() {
           </button>
         </div>
 
-        <div className={ui.info} aria-live="polite">
-          <strong>Total: {formatarMoeda(total)}</strong>
+        <div className={ui.totalDestaque} aria-live="polite">
+          <span>Total das diárias</span>
+          <strong>{formatarMoeda(total)}</strong>
         </div>
         {dias > 0 && quantidade > dias && (
           <div className={ui.aviso}>
@@ -347,6 +348,7 @@ export default function ViagemFormPage() {
           </div>
         )}
 
+        <h2 className={ui.blocoTitulo}>Quem paga e quem aprova</h2>
         {!corrigindo && <BeneficiarioCampos valor={benef} onChange={setBenef} />}
 
         <CentroCustoCampo
@@ -397,7 +399,7 @@ export default function ViagemFormPage() {
 
         {erro && <div className={ui.erro}>{erro}</div>}
 
-        <div className={ui.botoes}>
+        <div className={`${ui.botoes} ${ui.barraAcao}`}>
           <button className={ui.botao} disabled={enviando || internacional}>
             {enviando ? 'Enviando…' : corrigindo ? 'Reenviar para conferência' : 'Enviar'}
           </button>

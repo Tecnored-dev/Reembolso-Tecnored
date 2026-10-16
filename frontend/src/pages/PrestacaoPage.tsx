@@ -132,7 +132,7 @@ export default function PrestacaoPage() {
 
         {erro && <div className={ui.erro}>{erro}</div>}
 
-        <div className={ui.botoes}>
+        <div className={`${ui.botoes} ${ui.barraAcao}`}>
           <button className={ui.botao} disabled={enviando}>
             {enviando ? 'Enviando…' : 'Enviar para conferência'}
           </button>

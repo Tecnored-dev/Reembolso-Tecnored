@@ -7,8 +7,8 @@
   margin: 0;
   min-width: 0;
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  padding: 12px;
+  border-radius: var(--radius-lg);
+  padding: var(--space-3);
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 10px;
@@ -19,7 +19,7 @@
   justify-content: space-between;
   align-items: center;
   font-weight: 600;
-  font-size: 0.9rem;
+  font-size: 15px;
 }
 
 .linha {
@@ -39,12 +39,15 @@
   border: none;
   color: var(--color-text-muted);
   cursor: pointer;
-  font-size: 0.85rem;
+  font: inherit;
+  font-size: 14px;
+  min-height: var(--alvo-toque);
+  padding: 0 var(--space-2);
   text-decoration: underline;
 }
 
 .remover:hover {
-  color: #b91c1c;
+  color: var(--color-danger);
 }
 
 .rodape {
@@ -56,8 +59,18 @@
 }
 
 .total {
-  font-size: 1.1rem;
+  font-size: 20px;
+  line-height: 26px;
   font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.total span {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
 }
 
 /* O campo de arquivo tem largura mínima própria e empurrava a nota para fora
@@ -67,4 +80,60 @@
   min-width: 0;
   max-width: 100%;
   box-sizing: border-box;
+}
+
+/* Anexo da nota: a foto é o passo mais importante no celular. */
+.anexo {
+  border: 2px dashed var(--color-border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-sunken);
+  padding: var(--space-4);
+}
+
+.anexo label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.nota .anexo input[type='file'][id] {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  min-height: var(--alvo-toque);
+  font-size: 14px;
+}
+
+.anexo input[type='file']::file-selector-button {
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  min-height: var(--alvo-toque);
+  padding: 10px 18px;
+  margin-right: var(--space-3);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--color-botao);
+  color: var(--color-on-botao);
+  cursor: pointer;
+}
+
+.anexo input[type='file']::file-selector-button:hover {
+  background: var(--color-botao-hover);
+}
+
+.miniatura {
+  max-height: 200px;
+  max-width: 100%;
+  object-fit: contain;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  align-self: flex-start;
+}
+
+.alerta {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
 }

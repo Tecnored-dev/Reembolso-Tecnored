@@ -117,6 +117,48 @@
   color: var(--color-text-muted);
 }
 
+/* ----- Blocos do formulário --------------------------------------------- */
+.blocoTitulo {
+  font-size: 16px;
+  line-height: 22px;
+  font-weight: 700;
+  margin-top: var(--space-2);
+  padding-top: var(--space-5);
+  border-top: 1px solid var(--color-border);
+}
+
+/* Opção de rádio/caixa com área de toque confortável no celular. */
+.campo .opcao {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: var(--alvo-toque);
+  font-size: 16px;
+  font-weight: 400;
+}
+
+/* Total calculado na hora (diária de viagem). */
+.totalDestaque {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  border-radius: var(--radius-md);
+  padding: 14px var(--space-4);
+  background: var(--color-tecnored-bg-soft);
+  color: var(--color-tecnored-primary-dark);
+  font-weight: 600;
+}
+
+.totalDestaque strong {
+  font-size: 32px;
+  line-height: 36px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+}
+
 /* ----- Botões ------------------------------------------------------------ */
 .botoes {
   display: flex;
@@ -281,5 +323,24 @@
 @media (max-width: 640px) {
   .opcional {
     display: none;
+  }
+}
+
+/* Celular: a ação principal fica numa barra fixa embaixo, na largura toda. */
+@media (max-width: 640px) {
+  .barraAcao {
+    position: sticky;
+    bottom: 0;
+    z-index: 5;
+    margin: 0 calc(-1 * var(--space-5)) calc(-1 * var(--space-5));
+    padding: var(--space-3) var(--space-5);
+    background: var(--color-surface);
+    border-top: 1px solid var(--color-border);
+    border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+    box-shadow: var(--shadow-md);
+  }
+
+  .barraAcao > * {
+    flex: 1 1 140px;
   }
 }

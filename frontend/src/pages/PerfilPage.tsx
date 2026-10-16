@@ -60,7 +60,7 @@ export default function PerfilPage() {
         {erro && <div className={ui.erro}>{erro}</div>}
         {salvo && <div className={ui.info}>Perfil atualizado.</div>}
 
-        <div className={ui.botoes}>
+        <div className={`${ui.botoes} ${ui.barraAcao}`}>
           <button className={ui.botao} disabled={salvando || !matricula.trim()}>
             {salvando ? 'Salvando…' : primeiroAcesso ? 'Continuar' : 'Salvar'}
           </button>

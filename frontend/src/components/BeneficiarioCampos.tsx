@@ -44,7 +44,7 @@ export default function BeneficiarioCampos({ valor, onChange }: Props) {
 
   return (
     <div className={ui.campo}>
-      <label style={{ fontWeight: 400 }}>
+      <label className={ui.opcao}>
         <input
           type="checkbox"
           checked={valor.ativo}

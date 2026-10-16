@@ -210,6 +210,7 @@ export default function AdiantamentoFormPage() {
           <span className={ui.ajuda}>{descricao.length}/500</span>
         </div>
 
+        <h2 className={ui.blocoTitulo}>Quem paga e quem aprova</h2>
         {!corrigindo && <BeneficiarioCampos valor={benef} onChange={setBenef} />}
 
         <div className={ui.grade}>
@@ -252,7 +253,7 @@ export default function AdiantamentoFormPage() {
 
         {erro && <div className={ui.erro}>{erro}</div>}
 
-        <div className={ui.botoes}>
+        <div className={`${ui.botoes} ${ui.barraAcao}`}>
           <button className={ui.botao} disabled={enviando}>
             {enviando ? 'Enviando…' : corrigindo ? 'Reenviar para o gestor' : 'Pedir adiantamento'}
           </button>
