@@ -3,10 +3,12 @@ import type { Status } from '@/types'
 import styles from './StatusBadge.module.css'
 
 const CURTO: Record<Status, string> = {
-  em_conferencia: 'Em conferência',
-  aguardando_gestor: 'Com o gestor',
+  // Nomes do fluxo principal pedidos pela Thais (15/10).
+  em_conferencia: 'Pendente de conferência',
+  aguardando_gestor: 'Pendente de aprovação',
   aguardando_pagamento: 'Aguardando pagamento',
-  pago: 'Paga',
+  pago: 'Finalizado - Pago',
+  recusado: 'Finalizado - Recusado',
   devolvido: 'Devolvida',
   cancelado: 'Cancelada',
   aguardando_prestacao: 'Prestar contas',
@@ -20,13 +22,14 @@ const CURTO: Record<Status, string> = {
 }
 
 // A cor diz com quem está o pedido agora; o ícone garante que não dependa só da cor.
-type Familia = 'voce' | 'financeiro' | 'gestor' | 'concluido' | 'cancelado'
+type Familia = 'voce' | 'financeiro' | 'gestor' | 'concluido' | 'cancelado' | 'recusado'
 
 const VISUAL: Record<Status, { familia: Familia; icone: NomeIcone }> = {
   em_conferencia: { familia: 'financeiro', icone: 'lupa' },
   aguardando_gestor: { familia: 'gestor', icone: 'pessoa' },
   aguardando_pagamento: { familia: 'financeiro', icone: 'cifrao' },
   pago: { familia: 'concluido', icone: 'check' },
+  recusado: { familia: 'recusado', icone: 'x' },
   devolvido: { familia: 'voce', icone: 'seta-volta' },
   cancelado: { familia: 'cancelado', icone: 'x' },
   aguardando_prestacao: { familia: 'voce', icone: 'recibo' },

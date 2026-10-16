@@ -50,7 +50,9 @@ class Solicitacao(Base):
     criado_por_email: Mapped[str | None] = mapped_column(String(254), nullable=True)
     criado_por_nome: Mapped[str | None] = mapped_column(String(200), nullable=True)
     matricula: Mapped[str] = mapped_column(String(30), nullable=False)
-    centro_custo: Mapped[str] = mapped_column(String(140), nullable=False)  # "3350 - T.I / T.A"
+    # Ex.: "3350 - T.I / T.A". Escolhido em cada pedido (Thais, 15/10); o
+    # adiantamento não tem centro de custo (nulo).
+    centro_custo: Mapped[str | None] = mapped_column(String(140), nullable=True)
     empresa: Mapped[str] = mapped_column(String(120), nullable=False)
 
     gestor_email: Mapped[str | None] = mapped_column(String(254), nullable=True)
@@ -67,8 +69,11 @@ class Solicitacao(Base):
     destino: Mapped[str | None] = mapped_column(String(200), nullable=True)
     viagem_inicio: Mapped[date | None] = mapped_column(Date, nullable=True)
     viagem_fim: Mapped[date | None] = mapped_column(Date, nullable=True)
-    # Só em adiantamento: quantas diárias foram pagas antes da viagem. O valor
-    # adiantado fica em `valor_total`; o gasto comprovado, em `valor_gasto`.
+    # Diária de viagem: "Viagem internacional?" (internacional não tem diária).
+    viagem_internacional: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # Adiantamento: o valor adiantado (informado pelo colaborador desde 15/10)
+    # fica em `valor_total`; o gasto comprovado, em `valor_gasto`. `diarias` e
+    # `valor_complementar` só existem nos pedidos antigos (calculados por dia).
     diarias: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # Diária complementar (quem recebe auxílio refeição): valor informado pelo
     # colaborador, somado às diárias normais (já incluído em `valor_total`).
@@ -102,6 +107,10 @@ class Solicitacao(Base):
     devolvido_em: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     motivo_devolucao: Mapped[str | None] = mapped_column(Text, nullable=True)
     lembrete_expiracao_em: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Recusa do gestor (Thais, 15/10): finaliza o pedido.
+    recusado_por: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    recusado_em: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    motivo_recusa: Mapped[str | None] = mapped_column(Text, nullable=True)
     cancelado_em: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     motivo_cancelamento: Mapped[str | None] = mapped_column(Text, nullable=True)
 
@@ -111,6 +120,13 @@ class Solicitacao(Base):
         back_populates="solicitacao",
         cascade="all, delete-orphan",
         order_by="Despesa.id",
+        lazy="selectin",
+    )
+    # Diária de viagem: linhas de valor integral/parcial (sem nota nem arquivo).
+    linhas_diaria: Mapped[list[LinhaDiaria]] = relationship(
+        back_populates="solicitacao",
+        cascade="all, delete-orphan",
+        order_by="LinhaDiaria.id",
         lazy="selectin",
     )
     historico: Mapped[list[Historico]] = relationship(
@@ -156,6 +172,27 @@ class Despesa(Base):
     solicitacao: Mapped[Solicitacao] = relationship(back_populates="despesas")
 
     __table_args__ = (Index("ix_despesas_solicitacao", "solicitacao_id"),)
+
+
+class LinhaDiaria(Base):
+    """Uma linha da Diária de Viagem: `quantidade` diárias a `valor_unitario`.
+
+    "integral" usa o valor fixo da diária; "parcial" usa o valor informado.
+    """
+
+    __tablename__ = "linhas_diaria"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    solicitacao_id: Mapped[int] = mapped_column(
+        ForeignKey("solicitacoes.id", ondelete="CASCADE"), nullable=False
+    )
+    tipo: Mapped[str] = mapped_column(String(10), nullable=False)  # integral | parcial
+    quantidade: Mapped[int] = mapped_column(Integer, nullable=False)
+    valor_unitario: Mapped[Decimal] = mapped_column(DINHEIRO, nullable=False)
+
+    solicitacao: Mapped[Solicitacao] = relationship(back_populates="linhas_diaria")
+
+    __table_args__ = (Index("ix_linhas_diaria_solicitacao", "solicitacao_id"),)
 
 
 class Historico(Base):

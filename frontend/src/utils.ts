@@ -95,7 +95,9 @@ export interface NotaParaAlerta {
 export function alertasViagem(
   notas: NotaParaAlerta[],
   limiteDia: number,
-  limiteTotal: number
+  limiteTotal: number,
+  /** Categorias que contam como refeição (alimentação: refeição + almoço em Pinda). */
+  categoriasRefeicao: string[] = ['refeicao']
 ): string[] {
   const porDia = new Map<string, number>()
   let total = 0
@@ -103,7 +105,7 @@ export function alertasViagem(
     const valor = lerValor(n.valor)
     if (Number.isNaN(valor)) continue
     total += valor
-    if (n.categoria === 'refeicao' && n.data)
+    if (categoriasRefeicao.includes(n.categoria) && n.data)
       porDia.set(n.data, (porDia.get(n.data) ?? 0) + valor)
   }
   const alertas: string[] = []

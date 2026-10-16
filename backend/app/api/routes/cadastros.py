@@ -12,9 +12,9 @@ from app.auth.papeis import GESTOR
 from app.auth.sessoes import Usuario, agora_utc
 from app.config import (
     CATEGORIAS_VIAGEM,
+    LIMITE_ALIMENTACAO_DIA,
     LIMITE_REFEICAO_DIA,
     LIMITE_SOLICITACAO,
-    LOCAIS_REFEICAO,
     MAX_DIARIAS,
     MOTIVOS,
     VALOR_DIARIA,
@@ -31,8 +31,11 @@ router = APIRouter(prefix="/api", tags=["cadastros"])
 
 
 class PerfilEntrada(BaseModel):
+    """Perfil: só a matrícula (Thais, 15/10). O centro de custo é escolhido em
+    cada pedido; aqui ele é opcional e só serve de sugestão."""
+
     matricula: str = Field(min_length=1, max_length=30)
-    centro_custo_id: int
+    centro_custo_id: int | None = None
 
 
 def _perfil(db: Session, usuario: Usuario) -> CadastroUsuario:
@@ -75,15 +78,16 @@ def salvar_perfil(
     usuario: Usuario = Depends(usuario_atual),
     db: Session = Depends(get_db),
 ):
-    centro = db.get(CentroCusto, entrada.centro_custo_id)
-    if centro is None or not centro.ativo:
-        raise RegraNegocio("Centro de custo inválido.")
     matricula = entrada.matricula.strip()
     if not matricula:
         raise RegraNegocio("Informe a matrícula.")
     cadastro = _perfil(db, usuario)
+    if entrada.centro_custo_id is not None:
+        centro = db.get(CentroCusto, entrada.centro_custo_id)
+        if centro is None or not centro.ativo:
+            raise RegraNegocio("Centro de custo inválido.")
+        cadastro.centro_custo_id = centro.id
     cadastro.matricula = matricula
-    cadastro.centro_custo_id = centro.id
     cadastro.atualizado_em = agora_utc()
     db.commit()
     db.refresh(cadastro)
@@ -104,10 +108,8 @@ def cadastros(usuario: Usuario = Depends(usuario_atual), db: Session = Depends(g
         "categorias_viagem": [{"id": k, "rotulo": v} for k, v in CATEGORIAS_VIAGEM.items()],
         "valor_diaria": str(VALOR_DIARIA),
         "motivos": MOTIVOS,
-        "locais_refeicao": [
-            {"id": chave, "rotulo": rotulo, "limite": str(limite)}
-            for chave, (rotulo, limite) in LOCAIS_REFEICAO.items()
-        ],
+        # Reembolso de despesas - alimentação: refeição por dia (Thais, 15/10)
+        "limite_alimentacao_dia": str(LIMITE_ALIMENTACAO_DIA),
         "max_diarias": MAX_DIARIAS,
     }
 

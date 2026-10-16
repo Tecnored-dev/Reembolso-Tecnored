@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 from datetime import date
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile
 from fastapi.responses import Response
@@ -65,24 +66,20 @@ class PedidoAdiantamento(BaseModel):
     descricao: str = Field(default="", max_length=500)
     empresa_id: int
     gestor_email: str | None = Field(default=None, max_length=254)
-    # Diária complementar (quem recebe auxílio refeição): valor total, ex. "250,00".
-    # Vazio ou ausente = diárias normais.
-    diaria_complementar: str | None = Field(default=None, max_length=20)
+    # Valor do adiantamento, ex. "250,00" (Thais, 15/10). Vazio vira erro em português.
+    valor: str = Field(default="", max_length=20)
     # Pedido em nome de outra pessoa (opcional).
     beneficiario_email: str | None = Field(default=None, max_length=254)
     beneficiario_nome: str = Field(default="", max_length=200)
     beneficiario_matricula: str = Field(default="", max_length=30)
-    beneficiario_centro_custo_id: int | None = None
 
     def dados(self) -> fluxo.DadosAdiantamento:
-        complementar = (self.diaria_complementar or "").strip()
         return fluxo.DadosAdiantamento(
-            complementar=ler_valor(complementar) if complementar else None,
+            valor=ler_valor(self.valor) if self.valor.strip() else Decimal("0"),
             beneficiario=_beneficiario(
                 self.beneficiario_email,
                 self.beneficiario_nome,
                 self.beneficiario_matricula,
-                self.beneficiario_centro_custo_id,
             ),
             destino=self.destino,
             inicio=self.viagem_inicio,
@@ -93,31 +90,68 @@ class PedidoAdiantamento(BaseModel):
         )
 
 
+class LinhaPedidoDiaria(BaseModel):
+    tipo: str = Field(default="", max_length=10)  # integral | parcial
+    quantidade: int = Field(default=0, ge=0, le=1000)
+    valor: str = Field(default="", max_length=20)  # só na parcial
+
+
+class PedidoDiaria(BaseModel):
+    """Diária de Viagem: linhas de valor integral/parcial, sem notas (Thais, 15/10)."""
+
+    destino: str = Field(default="", max_length=200)
+    viagem_inicio: date
+    viagem_fim: date
+    descricao: str = Field(default="", max_length=500)  # motivo da viagem
+    empresa_id: int
+    gestor_email: str | None = Field(default=None, max_length=254)
+    centro_custo_id: str = Field(default="", max_length=10)
+    internacional: bool = False
+    linhas: list[LinhaPedidoDiaria] = Field(default_factory=list, max_length=50)
+    beneficiario_email: str | None = Field(default=None, max_length=254)
+    beneficiario_nome: str = Field(default="", max_length=200)
+    beneficiario_matricula: str = Field(default="", max_length=30)
+
+    def dados(self) -> fluxo.DadosDiaria:
+        return fluxo.DadosDiaria(
+            destino=self.destino,
+            inicio=self.viagem_inicio,
+            fim=self.viagem_fim,
+            descricao=self.descricao,
+            empresa_id=self.empresa_id,
+            gestor_email=(self.gestor_email or "").strip().lower() or None,
+            linhas=tuple(
+                fluxo.ItemDiaria(
+                    tipo=linha.tipo,
+                    quantidade=linha.quantidade,
+                    valor=ler_valor(linha.valor) if linha.valor.strip() else None,
+                )
+                for linha in self.linhas
+            ),
+            internacional=self.internacional,
+            beneficiario=_beneficiario(
+                self.beneficiario_email, self.beneficiario_nome, self.beneficiario_matricula
+            ),
+            centro_custo_id=_centro_custo_form(self.centro_custo_id),
+        )
+
+
 _ROTULO_COMPROVANTE = "Comprovante da devolução"
 
 
-def _beneficiario_form(
-    email: str, nome: str, matricula: str, centro_custo_id: str
-) -> fluxo.Beneficiario | None:
+def _centro_custo_form(centro_custo_id: str) -> int | None:
+    """Centro de custo do pedido (Thais, 15/10). Vazio = não informado."""
     try:
-        centro = int(centro_custo_id) if centro_custo_id.strip() else None
+        return int(centro_custo_id) if centro_custo_id.strip() else None
     except ValueError:
         raise RegraNegocio("Centro de custo inválido.") from None
-    return _beneficiario(email, nome, matricula, centro)
 
 
-def _beneficiario(
-    email: str | None, nome: str, matricula: str, centro_custo_id: int | None
-) -> fluxo.Beneficiario | None:
+def _beneficiario(email: str | None, nome: str, matricula: str) -> fluxo.Beneficiario | None:
     """Pedido em nome de outra pessoa: só existe se o e-mail dela vier preenchido."""
     if not (email or "").strip():
         return None
-    return fluxo.Beneficiario(
-        email=email.strip(),
-        nome=nome or "",
-        matricula=matricula or "",
-        centro_custo_id=centro_custo_id,
-    )
+    return fluxo.Beneficiario(email=email.strip(), nome=nome or "", matricula=matricula or "")
 
 
 # ---------------------------------------------------------------------------
@@ -165,6 +199,20 @@ def _completo(sol: Solicitacao, usuario: Usuario) -> dict:
         ),
         "viagem_inicio": _iso(sol.viagem_inicio),
         "viagem_fim": _iso(sol.viagem_fim),
+        "viagem_internacional": sol.viagem_internacional,
+        "linhas_diaria": [
+            {
+                "id": linha.id,
+                "tipo": linha.tipo,
+                "tipo_rotulo": (
+                    "Valor Integral" if linha.tipo == fluxo.DIARIA_INTEGRAL else "Valor Parcial"
+                ),
+                "quantidade": linha.quantidade,
+                "valor_unitario": str(linha.valor_unitario),
+                "subtotal": str(linha.valor_unitario * linha.quantidade),
+            }
+            for linha in sol.linhas_diaria
+        ],
         "diarias": sol.diarias,
         "diaria_complementar": bool(sol.diaria_complementar),
         "valor_complementar": (
@@ -188,6 +236,9 @@ def _completo(sol: Solicitacao, usuario: Usuario) -> dict:
         "data_pagamento": _iso(sol.data_pagamento),
         "motivo_devolucao": sol.motivo_devolucao,
         "devolvido_por": sol.devolvido_por,
+        "recusado_por": sol.recusado_por,
+        "recusado_em": _iso(sol.recusado_em),
+        "motivo_recusa": sol.motivo_recusa,
         "motivo_cancelamento": sol.motivo_cancelamento,
         "despesas": [
             {
@@ -196,8 +247,6 @@ def _completo(sol: Solicitacao, usuario: Usuario) -> dict:
                 "categoria_rotulo": (
                     _ROTULO_COMPROVANTE
                     if d.categoria == fluxo.COMPROVANTE_DEVOLUCAO
-                    else "Refeição"
-                    if sol.tipo == fluxo.TIPO_ALIMENTACAO
                     else "Despesas diversas"
                     if sol.tipo == fluxo.TIPO_DIVERSAS
                     else CATEGORIAS_VIAGEM.get(d.categoria)
@@ -234,26 +283,21 @@ def _iso(valor) -> str | None:
 # Entrada de formulário (multipart, por causa do arquivo)
 # ---------------------------------------------------------------------------
 def _dados(
-    data_despesa: str,
-    valor: str,
     descricao: str,
     empresa_id: int,
     gestor_email: str | None,
-    motivo: str = "",
-    local: str = "",
-) -> fluxo.DadosAlimentacao:
-    try:
-        data = date.fromisoformat(data_despesa)
-    except ValueError:
-        raise RegraNegocio("Data da despesa inválida.") from None
-    return fluxo.DadosAlimentacao(
-        data_despesa=data,
-        valor=ler_valor(valor),
+    motivo: str,
+    despesas: str,
+    centro_custo_id: str = "",
+) -> fluxo.DadosDespesas:
+    """Reembolso de despesas (alimentação ou diversas): notas como na viagem."""
+    return fluxo.DadosDespesas(
         descricao=descricao,
         empresa_id=empresa_id,
         gestor_email=(gestor_email or "").strip().lower() or None,
+        itens=_itens(despesas),
         motivo=motivo.strip(),
-        local=local.strip(),
+        centro_custo_id=_centro_custo_form(centro_custo_id),
     )
 
 
@@ -262,35 +306,6 @@ async def _arquivo(upload: UploadFile | None) -> servico_arquivos.ArquivoValidad
         return None
     conteudo = await upload.read(ARQUIVO_TAMANHO_MAX + 1)
     return servico_arquivos.validar(conteudo, upload.filename)
-
-
-def _datas(inicio: str, fim: str) -> tuple[date, date]:
-    try:
-        return date.fromisoformat(inicio), date.fromisoformat(fim)
-    except ValueError:
-        raise RegraNegocio("Datas da viagem inválidas.") from None
-
-
-def _dados_viagem(
-    destino: str,
-    viagem_inicio: str,
-    viagem_fim: str,
-    descricao: str,
-    empresa_id: int,
-    gestor_email: str | None,
-    despesas: str,
-) -> fluxo.DadosViagem:
-    itens = _itens(despesas)
-    inicio, fim = _datas(viagem_inicio, viagem_fim)
-    return fluxo.DadosViagem(
-        destino=destino,
-        inicio=inicio,
-        fim=fim,
-        descricao=descricao,
-        empresa_id=empresa_id,
-        gestor_email=(gestor_email or "").strip().lower() or None,
-        itens=itens,
-    )
 
 
 def _itens(despesas: str) -> tuple[fluxo.ItemViagem, ...]:
@@ -344,122 +359,74 @@ def listar(
 
 @router.post("/alimentacao", status_code=201)
 async def criar_alimentacao(
-    data_despesa: str = Form(...),
-    valor: str = Form(...),
-    descricao: str = Form(...),
-    empresa_id: int = Form(...),
-    gestor_email: str | None = Form(None),
-    motivo: str = Form(""),
-    local_refeicao: str = Form(""),
-    # Pedido em nome de outra pessoa (opcional; só o e-mail liga a opção).
-    beneficiario_email: str = Form(""),
-    beneficiario_nome: str = Form(""),
-    beneficiario_matricula: str = Form(""),
-    beneficiario_centro_custo_id: str = Form(""),
-    arquivo: UploadFile | None = File(None),
-    usuario: Usuario = Depends(usuario_atual),
-    db: Session = Depends(get_db),
-    settings: Settings = Depends(get_settings),
-    armazenamento: Armazenamento = Depends(get_armazenamento),
-):
-    dados = replace(
-        _dados(data_despesa, valor, descricao, empresa_id, gestor_email, motivo, local_refeicao),
-        beneficiario=_beneficiario_form(
-            beneficiario_email,
-            beneficiario_nome,
-            beneficiario_matricula,
-            beneficiario_centro_custo_id,
-        ),
-    )
-    return await _criar_uma_nota(
-        fluxo.TIPO_ALIMENTACAO, dados, arquivo, usuario, db, settings, armazenamento
-    )
-
-
-@router.post("/diversas", status_code=201)
-async def criar_diversas(
-    data_despesa: str = Form(...),
-    valor: str = Form(...),
-    descricao: str = Form(...),
-    empresa_id: int = Form(...),
-    gestor_email: str | None = Form(None),
-    motivo: str = Form(""),
-    beneficiario_email: str = Form(""),
-    beneficiario_nome: str = Form(""),
-    beneficiario_matricula: str = Form(""),
-    beneficiario_centro_custo_id: str = Form(""),
-    arquivo: UploadFile | None = File(None),
-    usuario: Usuario = Depends(usuario_atual),
-    db: Session = Depends(get_db),
-    settings: Settings = Depends(get_settings),
-    armazenamento: Armazenamento = Depends(get_armazenamento),
-):
-    """Despesas diversas: mesmo formulário e fluxo da alimentação (corrige em /reenviar)."""
-    dados = replace(
-        _dados(data_despesa, valor, descricao, empresa_id, gestor_email, motivo),
-        beneficiario=_beneficiario_form(
-            beneficiario_email,
-            beneficiario_nome,
-            beneficiario_matricula,
-            beneficiario_centro_custo_id,
-        ),
-    )
-    return await _criar_uma_nota(
-        fluxo.TIPO_DIVERSAS, dados, arquivo, usuario, db, settings, armazenamento
-    )
-
-
-async def _criar_uma_nota(
-    tipo: str,
-    dados: fluxo.DadosAlimentacao,
-    arquivo: UploadFile | None,
-    usuario: Usuario,
-    db: Session,
-    settings: Settings,
-    armazenamento: Armazenamento,
-) -> dict:
-    validado = await _arquivo(arquivo)
-    if validado is None:
-        raise RegraNegocio("Anexe a foto ou o PDF da nota.")
-    sol = fluxo.criar_alimentacao(db, settings, armazenamento, usuario, dados, validado, tipo)
-    return _completo(sol, usuario)
-
-
-@router.post("/viagem", status_code=201)
-async def criar_viagem(
     # Texto vazio chega como "campo ausente": o padrão "" deixa a mensagem
     # de validação do fluxo (em português) aparecer em vez do 422 genérico.
-    destino: str = Form(""),
-    viagem_inicio: str = Form(...),
-    viagem_fim: str = Form(...),
     descricao: str = Form(""),
     empresa_id: int = Form(...),
     gestor_email: str | None = Form(None),
+    motivo: str = Form(""),
     despesas: str = Form(...),
+    centro_custo_id: str = Form(""),
     # Pedido em nome de outra pessoa (opcional; só o e-mail liga a opção).
     beneficiario_email: str = Form(""),
     beneficiario_nome: str = Form(""),
     beneficiario_matricula: str = Form(""),
-    beneficiario_centro_custo_id: str = Form(""),
     arquivos: list[UploadFile] = File([]),
     usuario: Usuario = Depends(usuario_atual),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
     armazenamento: Armazenamento = Depends(get_armazenamento),
 ):
+    """Reembolso de despesas - alimentação: notas com categoria (Thais, 15/10)."""
     dados = replace(
-        _dados_viagem(
-            destino, viagem_inicio, viagem_fim, descricao, empresa_id, gestor_email, despesas
-        ),
-        beneficiario=_beneficiario_form(
-            beneficiario_email,
-            beneficiario_nome,
-            beneficiario_matricula,
-            beneficiario_centro_custo_id,
-        ),
+        _dados(descricao, empresa_id, gestor_email, motivo, despesas, centro_custo_id),
+        beneficiario=_beneficiario(beneficiario_email, beneficiario_nome, beneficiario_matricula),
     )
     validados = await _arquivos(arquivos)
-    sol = fluxo.criar_viagem(db, settings, armazenamento, usuario, dados, validados)
+    sol = fluxo.criar_alimentacao(
+        db, settings, armazenamento, usuario, dados, validados, fluxo.TIPO_ALIMENTACAO
+    )
+    return _completo(sol, usuario)
+
+
+@router.post("/diversas", status_code=201)
+async def criar_diversas(
+    descricao: str = Form(""),
+    empresa_id: int = Form(...),
+    gestor_email: str | None = Form(None),
+    motivo: str = Form(""),
+    despesas: str = Form(...),
+    centro_custo_id: str = Form(""),
+    beneficiario_email: str = Form(""),
+    beneficiario_nome: str = Form(""),
+    beneficiario_matricula: str = Form(""),
+    arquivos: list[UploadFile] = File([]),
+    usuario: Usuario = Depends(usuario_atual),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+    armazenamento: Armazenamento = Depends(get_armazenamento),
+):
+    """Reembolso de despesas - diversas: notas sem categoria (corrige em /reenviar)."""
+    dados = replace(
+        _dados(descricao, empresa_id, gestor_email, motivo, despesas, centro_custo_id),
+        beneficiario=_beneficiario(beneficiario_email, beneficiario_nome, beneficiario_matricula),
+    )
+    validados = await _arquivos(arquivos)
+    sol = fluxo.criar_alimentacao(
+        db, settings, armazenamento, usuario, dados, validados, fluxo.TIPO_DIVERSAS
+    )
+    return _completo(sol, usuario)
+
+
+@router.post("/viagem", status_code=201)
+def criar_diaria(
+    pedido: PedidoDiaria,
+    usuario: Usuario = Depends(usuario_atual),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
+    """Diária de Viagem (Thais, 15/10): linhas integral/parcial, sem notas."""
+    sol = fluxo.criar_diaria(db, settings, usuario, pedido.dados())
     return _completo(sol, usuario)
 
 
@@ -546,48 +513,33 @@ def pagar(
 @router.post("/{sol_id}/reenviar")
 async def reenviar(
     sol_id: int,
-    data_despesa: str = Form(...),
-    valor: str = Form(...),
-    descricao: str = Form(...),
-    empresa_id: int = Form(...),
-    gestor_email: str | None = Form(None),
-    motivo: str = Form(""),
-    local_refeicao: str = Form(""),
-    arquivo: UploadFile | None = File(None),
-    usuario: Usuario = Depends(usuario_atual),
-    db: Session = Depends(get_db),
-    settings: Settings = Depends(get_settings),
-    armazenamento: Armazenamento = Depends(get_armazenamento),
-):
-    dados = _dados(data_despesa, valor, descricao, empresa_id, gestor_email, motivo, local_refeicao)
-    validado = await _arquivo(arquivo)
-    sol = fluxo.reenviar(db, settings, armazenamento, usuario, sol_id, dados, validado)
-    return _completo(sol, usuario)
-
-
-@router.post("/{sol_id}/reenviar-viagem")
-async def reenviar_viagem(
-    sol_id: int,
-    # Texto vazio chega como "campo ausente": o padrão "" deixa a mensagem
-    # de validação do fluxo (em português) aparecer em vez do 422 genérico.
-    destino: str = Form(""),
-    viagem_inicio: str = Form(...),
-    viagem_fim: str = Form(...),
     descricao: str = Form(""),
     empresa_id: int = Form(...),
     gestor_email: str | None = Form(None),
+    motivo: str = Form(""),
     despesas: str = Form(...),
+    centro_custo_id: str = Form(""),
     arquivos: list[UploadFile] = File([]),
     usuario: Usuario = Depends(usuario_atual),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
     armazenamento: Armazenamento = Depends(get_armazenamento),
 ):
-    dados = _dados_viagem(
-        destino, viagem_inicio, viagem_fim, descricao, empresa_id, gestor_email, despesas
-    )
+    dados = _dados(descricao, empresa_id, gestor_email, motivo, despesas, centro_custo_id)
     validados = await _arquivos(arquivos)
-    sol = fluxo.reenviar_viagem(db, settings, armazenamento, usuario, sol_id, dados, validados)
+    sol = fluxo.reenviar(db, settings, armazenamento, usuario, sol_id, dados, validados)
+    return _completo(sol, usuario)
+
+
+@router.post("/{sol_id}/reenviar-viagem")
+def reenviar_diaria(
+    sol_id: int,
+    pedido: PedidoDiaria,
+    usuario: Usuario = Depends(usuario_atual),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
+    sol = fluxo.reenviar_diaria(db, settings, usuario, sol_id, pedido.dados())
     return _completo(sol, usuario)
 
 

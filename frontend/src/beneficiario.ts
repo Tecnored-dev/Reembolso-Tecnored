@@ -7,7 +7,6 @@ export interface BeneficiarioForm {
   email: string
   nome: string
   matricula: string
-  centroCustoId: string
   /** Colega encontrado na busca (já entrou no sistema). */
   conhecido: UsuarioBusca | null
 }
@@ -17,11 +16,11 @@ export const BENEFICIARIO_VAZIO: BeneficiarioForm = {
   email: '',
   nome: '',
   matricula: '',
-  centroCustoId: '',
   conhecido: null,
 }
 
-/** Precisa digitar nome, matrícula e centro de custo? (a pessoa nunca entrou) */
+/** Precisa digitar nome e matrícula? (a pessoa nunca entrou). O centro de
+ * custo é escolhido no próprio pedido (Thais, 15/10). */
 export function precisaDosDados(b: BeneficiarioForm): boolean {
   return b.ativo && !b.conhecido?.perfil_completo
 }
@@ -39,7 +38,6 @@ export function camposBeneficiario(b: BeneficiarioForm): Record<string, string> 
   if (precisaDosDados(b)) {
     campos.beneficiario_nome = b.nome
     campos.beneficiario_matricula = b.matricula
-    campos.beneficiario_centro_custo_id = b.centroCustoId
   }
   return campos
 }

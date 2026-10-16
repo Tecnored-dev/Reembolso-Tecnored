@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
 import {
   BENEFICIARIO_VAZIO,
@@ -6,37 +6,45 @@ import {
   camposBeneficiario,
   type BeneficiarioForm,
 } from '@/beneficiario'
+import { centroCustoInicial } from '@/centroCusto'
 import BeneficiarioCampos from '@/components/BeneficiarioCampos'
+import CentroCustoCampo from '@/components/CentroCustoCampo'
 import { useContexto } from '@/components/contexto'
+import NotasViagem from '@/components/NotasViagem'
 import { useApi } from '@/hooks/useApi'
+import { anexarNotas, conferirNotas, novaNota, notasEnviadas, type NotaForm } from '@/notas'
 import { api } from '@/services/api'
 import ui from '@/styles/ui.module.css'
-import type { Cadastros, Gestor, Solicitacao, TipoUmaNota } from '@/types'
-import { formatarMoeda, hojeISO, lerValor, mensagemErro } from '@/utils'
-import styles from './AlimentacaoFormPage.module.css'
+import type { Cadastros, Gestor, Solicitacao, TipoDespesas } from '@/types'
+import { mensagemErro } from '@/utils'
 
-const ACEITOS = 'image/jpeg,image/png,application/pdf'
-
-// Novo reembolso de alimentação ou de despesas diversas (mesmo formulário e
-// fluxo), ou correção de um devolvido (/solicitacoes/:id/corrigir, vale para os
-// dois). Uma nota por solicitação. O gestor só é pedido de quem não é gestor
-// (gestor pedindo pula a aprovação de gestor).
+// "Reembolso de despesas - Prestação de Contas" (Thais, 15/10): o colaborador
+// escolhe alimentação ou despesas diversas e lança uma ou mais notas. Na
+// alimentação, cada nota tem categoria (mesma lista das notas de viagem) e a
+// refeição tem limite de R$ 40 por dia (só aviso). Também serve para corrigir
+// um pedido devolvido (/solicitacoes/:id/corrigir), inclusive os antigos, de
+// uma nota só. O gestor só é pedido de quem não é gestor.
 interface Props {
-  tipo?: TipoUmaNota
+  tipo?: TipoDespesas
 }
 
-const TEXTO: Record<TipoUmaNota, { titulo: string; exemplo: string; voltar: string }> = {
-  alimentacao: {
-    titulo: 'Novo reembolso de alimentação',
-    exemplo: 'Ex.: Almoço com cliente na visita técnica',
-    voltar: '/nova',
+const TIPOS: { id: TipoDespesas; rotulo: string; ajuda: string; exemplo: string }[] = [
+  {
+    id: 'alimentacao',
+    rotulo: 'Reembolso de alimentação',
+    ajuda: 'Refeições e demais gastos com nota (Uber, combustível, estacionamento…). Escolha a categoria de cada nota.',
+    exemplo: 'Ex.: Visita técnica ao cliente em Taubaté',
   },
-  diversas: {
-    titulo: 'Novo reembolso de despesas diversas',
+  {
+    id: 'diversas',
+    rotulo: 'Despesas diversas',
+    ajuda: 'Despesas que não se encaixam nas categorias — por exemplo, um carregador ou créditos de celular.',
     exemplo: 'Ex.: Carregador de notebook para a visita técnica',
-    voltar: '/nova/diversas',
   },
-}
+]
+
+// Categorias que contam para o limite de refeição da alimentação (mesma regra da API).
+const CATEGORIAS_REFEICAO = ['refeicao', 'almoco_pinda']
 
 export default function AlimentacaoFormPage({ tipo: tipoPedido = 'alimentacao' }: Props) {
   const { id } = useParams()
@@ -56,17 +64,19 @@ export default function AlimentacaoFormPage({ tipo: tipoPedido = 'alimentacao' }
       ? beneficiarioEhGestor(benef, gestores)
       : tem('gestor')
 
-  const [data, setData] = useState(hojeISO())
-  const [valor, setValor] = useState('')
+  const [escolhido, setEscolhido] = useState<TipoDespesas>(tipoPedido)
   const [descricao, setDescricao] = useState('')
   const [motivo, setMotivo] = useState('')
-  const [local, setLocal] = useState('')
   const [empresa, setEmpresa] = useState('')
+  const [centroCusto, setCentroCusto] = useState('')
   const [gestor, setGestor] = useState('')
-  const [arquivo, setArquivo] = useState<File | null>(null)
-  const [previa, setPrevia] = useState<string | null>(null)
+  const [notas, setNotas] = useState<NotaForm[]>(() => [novaNota()])
   const [erro, setErro] = useState<string | null>(null)
   const [enviando, setEnviando] = useState(false)
+
+  // Na correção, o tipo é o do pedido devolvido.
+  const tipo: TipoDespesas = original ? (original.tipo === 'diversas' ? 'diversas' : 'alimentacao') : escolhido
+  const texto = TIPOS.find((t) => t.id === tipo) ?? TIPOS[0]
 
   // A lista de gestores também diz se a pessoa do pedido é gestora.
   useEffect(() => {
@@ -82,67 +92,49 @@ export default function AlimentacaoFormPage({ tipo: tipoPedido = 'alimentacao' }
       setEmpresa(String(cadastros.empresas[0].id))
   }, [cadastros, corrigindo])
 
+  // Pedido novo: o centro de custo vem com o último usado (dá para trocar).
+  useEffect(() => {
+    if (!corrigindo && cadastros)
+      setCentroCusto((atual) => atual || centroCustoInicial(cadastros.centros_custo, perfil, null))
+  }, [cadastros, corrigindo, perfil])
+
   // Correção: carrega o que foi enviado para editar em cima.
   useEffect(() => {
     if (!id || !cadastros) return
     api.get<Solicitacao>(`/api/solicitacoes/${id}`).then((r) => {
       const s = r.data
       setOriginal(s)
-      setData(s.despesas[0]?.data_despesa ?? hojeISO())
-      setValor(Number(s.valor_total).toFixed(2).replace('.', ','))
       setDescricao(s.descricao)
       setMotivo(s.motivo ?? '')
-      setLocal(s.local_refeicao ?? '')
       setEmpresa(String(cadastros.empresas.find((e) => e.nome === s.empresa)?.id ?? ''))
+      setCentroCusto(centroCustoInicial(cadastros.centros_custo, perfil, s))
       setGestor(s.gestor_email ?? '')
+      setNotas(notasEnviadas(s.despesas))
     })
-  }, [id, cadastros])
-
-  useEffect(() => {
-    if (!arquivo || !arquivo.type.startsWith('image/')) {
-      setPrevia(null)
-      return
-    }
-    const url = URL.createObjectURL(arquivo)
-    setPrevia(url)
-    return () => URL.revokeObjectURL(url)
-  }, [arquivo])
-
-  // O limite depende de onde foi a refeição (Pinda R$ 40, Marabá R$ 45, outro R$ 135).
-  const localEscolhido = cadastros?.locais_refeicao.find((l) => l.id === local)
-  const limite = Number(localEscolhido?.limite ?? cadastros?.limite_refeicao_dia ?? 0)
-  const numero = useMemo(() => lerValor(valor), [valor])
-  // Na correção, o tipo é o do pedido devolvido.
-  const tipo: TipoUmaNota = original?.tipo === 'diversas' ? 'diversas' : tipoPedido
-  const texto = TEXTO[tipo]
-  // O limite diário de refeição só vale para alimentação.
-  const acimaDoLimite = tipo === 'alimentacao' && limite > 0 && numero > limite
+  }, [id, cadastros, perfil])
 
   async function enviar(e: FormEvent) {
     e.preventDefault()
     setErro(null)
-    if (!corrigindo && !arquivo) {
-      setErro('Anexe a foto ou o PDF da nota.')
+    const problema = conferirNotas(notas)
+    if (problema) {
+      setErro(problema)
       return
     }
     const form = new FormData()
-    form.append('data_despesa', data)
-    form.append('valor', valor)
+    anexarNotas(form, tipo === 'diversas' ? notas.map((n) => ({ ...n, categoria: 'diversos' })) : notas)
     form.append('descricao', descricao)
     form.append('motivo', motivo)
-    if (tipo === 'alimentacao') form.append('local_refeicao', local)
     form.append('empresa_id', empresa)
+    form.append('centro_custo_id', centroCusto)
     if (!pulaGestor) form.append('gestor_email', gestor)
     if (!corrigindo)
       for (const [campo, conteudo] of Object.entries(camposBeneficiario(benef)))
         form.append(campo, conteudo)
-    if (arquivo) form.append('arquivo', arquivo)
 
     setEnviando(true)
     try {
-      const url = corrigindo
-        ? `/api/solicitacoes/${id}/reenviar`
-        : `/api/solicitacoes/${tipo === 'diversas' ? 'diversas' : 'alimentacao'}`
+      const url = corrigindo ? `/api/solicitacoes/${id}/reenviar` : `/api/solicitacoes/${tipo}`
       // multipart explícito: sem isso o axios converteria o FormData em JSON.
       const res = await api.post<Solicitacao>(url, form, {
         headers: { 'Content-Type': 'multipart/form-data' },
@@ -155,7 +147,7 @@ export default function AlimentacaoFormPage({ tipo: tipoPedido = 'alimentacao' }
     }
   }
 
-  if (!perfil.completo) return <Navigate to={`/perfil?voltar=${TEXTO[tipoPedido].voltar}`} replace />
+  if (!perfil.completo) return <Navigate to="/perfil?voltar=/nova" replace />
 
   if (corrigindo && original && !original.acoes.includes('reenviar')) {
     return (
@@ -170,22 +162,15 @@ export default function AlimentacaoFormPage({ tipo: tipoPedido = 'alimentacao' }
       <div className={ui.cabecalho}>
         <div>
           <h1 className={ui.titulo}>
-            {corrigindo ? `Corrigir ${original?.codigo ?? ''}` : texto.titulo}
+            {corrigindo ? `Corrigir ${original?.codigo ?? ''}` : 'Reembolso de despesas - Prestação de Contas'}
           </h1>
           <p className={ui.muted}>
             {benef.ativo && benef.email.trim()
               ? `Em nome de ${benef.conhecido?.nome ?? (benef.nome || benef.email.trim())}`
-              : `${perfil.matricula} · ${perfil.centro_custo?.rotulo ?? ''}`}
+              : `Matrícula ${perfil.matricula}`}
           </p>
         </div>
       </div>
-
-      {tipo === 'diversas' && !corrigindo && (
-        <div className={ui.info} style={{ marginBottom: 16 }}>
-          Para despesas que não são alimentação, viagem nem adiantamento — por exemplo, um
-          carregador ou créditos de celular.
-        </div>
-      )}
 
       {original?.motivo_devolucao && (
         <div className={ui.aviso} style={{ marginBottom: 16 }}>
@@ -194,65 +179,38 @@ export default function AlimentacaoFormPage({ tipo: tipoPedido = 'alimentacao' }
       )}
 
       <form className={ui.form} onSubmit={enviar}>
-        <div className={ui.grade}>
-          <div className={ui.campo}>
-            <label htmlFor="data">Data da despesa</label>
-            <input
-              id="data"
-              type="date"
-              value={data}
-              max={hojeISO()}
-              onChange={(e) => setData(e.target.value)}
-              required
-            />
-          </div>
-          <div className={ui.campo}>
-            <label htmlFor="valor">Valor (R$)</label>
-            <input
-              id="valor"
-              inputMode="decimal"
-              placeholder="0,00"
-              value={valor}
-              onChange={(e) => setValor(e.target.value)}
-              required
-            />
-          </div>
-        </div>
-
-        <div className={ui.grade}>
-          <div className={ui.campo}>
-            <label htmlFor="motivo">Motivo</label>
-            <select id="motivo" value={motivo} onChange={(e) => setMotivo(e.target.value)} required>
-              <option value="">Selecione…</option>
-              {cadastros?.motivos.map((m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
-              ))}
-            </select>
-          </div>
-          {tipo === 'alimentacao' && (
-            <div className={ui.campo}>
-              <label htmlFor="local">Onde foi a refeição?</label>
-              <select id="local" value={local} onChange={(e) => setLocal(e.target.value)} required>
-                <option value="">Selecione…</option>
-                {cadastros?.locais_refeicao.map((l) => (
-                  <option key={l.id} value={l.id}>
-                    {l.rotulo} — limite {formatarMoeda(l.limite)}
-                  </option>
-                ))}
-              </select>
-            </div>
+        <fieldset className={ui.campo} style={{ border: 'none', padding: 0 }}>
+          <legend style={{ fontWeight: 600, marginBottom: 6 }}>Tipo de reembolso</legend>
+          {corrigindo ? (
+            <span>{texto.rotulo}</span>
+          ) : (
+            TIPOS.map((t) => (
+              <label key={t.id} style={{ fontWeight: 400 }}>
+                <input
+                  type="radio"
+                  name="tipo"
+                  value={t.id}
+                  checked={escolhido === t.id}
+                  onChange={() => setEscolhido(t.id)}
+                />{' '}
+                {t.rotulo}
+              </label>
+            ))
           )}
-        </div>
+          <span className={ui.ajuda}>{texto.ajuda}</span>
+        </fieldset>
 
-        {acimaDoLimite && (
-          <div className={ui.aviso}>
-            Acima do limite diário de refeição da política
-            {localEscolhido && local !== 'outro' ? ` para ${localEscolhido.rotulo}` : ''} (
-            {formatarMoeda(limite)}). Você pode enviar mesmo assim — o financeiro vai ver o alerta.
-          </div>
-        )}
+        <div className={ui.campo}>
+          <label htmlFor="motivo">Motivo</label>
+          <select id="motivo" value={motivo} onChange={(e) => setMotivo(e.target.value)} required>
+            <option value="">Selecione…</option>
+            {cadastros?.motivos.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+        </div>
 
         <div className={ui.campo}>
           <label htmlFor="descricao">Descrição</label>
@@ -267,13 +225,22 @@ export default function AlimentacaoFormPage({ tipo: tipoPedido = 'alimentacao' }
           <span className={ui.ajuda}>{descricao.length}/500</span>
         </div>
 
-        {!corrigindo && (
-          <BeneficiarioCampos
-            valor={benef}
-            onChange={setBenef}
-            centros={cadastros?.centros_custo ?? []}
-          />
-        )}
+        <NotasViagem
+          notas={notas}
+          setNotas={setNotas}
+          cadastros={cadastros}
+          semCategoria={tipo === 'diversas'}
+          limiteDia={Number(cadastros?.limite_alimentacao_dia ?? 0)}
+          categoriasRefeicao={CATEGORIAS_REFEICAO}
+        />
+
+        {!corrigindo && <BeneficiarioCampos valor={benef} onChange={setBenef} />}
+
+        <CentroCustoCampo
+          centros={cadastros?.centros_custo ?? []}
+          valor={centroCusto}
+          onChange={setCentroCusto}
+        />
 
         <div className={ui.grade}>
           <div className={ui.campo}>
@@ -314,20 +281,6 @@ export default function AlimentacaoFormPage({ tipo: tipoPedido = 'alimentacao' }
             {benef.ativo ? 'Como essa pessoa é gestora,' : 'Como você é gestor,'} depois da conferência do financeiro segue direto para pagamento.
           </p>
         )}
-
-        <div className={ui.campo}>
-          <label htmlFor="arquivo">
-            {corrigindo ? 'Trocar a nota (opcional)' : 'Foto ou PDF da nota'}
-          </label>
-          <input
-            id="arquivo"
-            type="file"
-            accept={ACEITOS}
-            onChange={(e) => setArquivo(e.target.files?.[0] ?? null)}
-          />
-          <span className={ui.ajuda}>JPG, PNG ou PDF, até 10 MB. No celular, dá para tirar a foto na hora.</span>
-          {previa && <img src={previa} alt="Prévia da nota" className={styles.previa} />}
-        </div>
 
         {erro && <div className={ui.erro}>{erro}</div>}
 

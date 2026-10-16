@@ -10,9 +10,14 @@ Regras (Thais, 06/10/2026 — docs do projeto `fluxos-aprovacao.md`):
         │ devolve ─▶ DEVOLVIDO ─(colaborador corrige e reenvia)─▶ EM_CONFERENCIA
         ▼ ok
     AGUARDANDO_GESTOR (o gestor escolhido aprova)      ← pulado se o solicitante é gestor
-        │ devolve ─▶ DEVOLVIDO  (o reenvio volta para a conferência, nunca direto ao gestor)
+        │ recusa ─▶ RECUSADO (final: o colaborador abre um pedido novo — Thais, 15/10)
         ▼ aprova
-    AGUARDANDO_PAGAMENTO ─(financeiro paga e informa a data)─▶ PAGO
+    AGUARDANDO_PAGAMENTO ─(financeiro salva a data do pagamento)─▶ PAGO
+
+- O gestor não devolve para correção: só aprova ou recusa (Thais, 15/10). Quem
+  devolve para correção é o financeiro, na conferência.
+- O centro de custo é escolhido em cada pedido (não é mais do perfil); o
+  adiantamento não tem centro de custo (Thais, 15/10).
 
 - Depois de enviar, o colaborador não edita nem cancela; só corrige quando devolvido.
 - Devolvida e parada: lembrete 2 dias antes e cancelada depois de
@@ -28,7 +33,7 @@ Adiantamento (diárias = R$ 135 vezes os dias; regras de 06/10/2026):
      para quem recebe auxílio refeição)
     colaborador pede ─▶ AGUARDANDO_GESTOR ─(aprova)─▶ AGUARDANDO_PAGAMENTO
         (pulado se o solicitante é gestor)    (Thais paga SEM conferir: não há nota)
-        │ devolve ─▶ DEVOLVIDO ─(corrige)─▶ AGUARDANDO_GESTOR
+        │ recusa ─▶ RECUSADO (final)
     pago ─▶ AGUARDANDO_PRESTACAO ─(colaborador manda as notas)─▶ PRESTACAO_EM_CONFERENCIA
         │ Thais devolve ─▶ PRESTACAO_DEVOLVIDA ─(corrige)─▶ PRESTACAO_EM_CONFERENCIA
         ▼ Thais confere (o resumo vai para a Thais e o gestor)
@@ -37,7 +42,7 @@ Adiantamento (diárias = R$ 135 vezes os dias; regras de 06/10/2026):
         │            (se recusar o comprovante, volta para AGUARDANDO_DEVOLUCAO)
         ├─ bateu ──▶ ENCERRADO
         └─ faltou ─▶ DIFERENCA_AGUARDANDO_GESTOR ─(aprova)─▶ DIFERENCA_AGUARDANDO_PAGAMENTO
-                     (pulado se gestor)  │ devolve ─▶ PRESTACAO_DEVOLVIDA
+                     (pulado se gestor)  │ recusa ─▶ RECUSADO (final, sem a diferença)
                                          ─(Thais paga a diferença)─▶ ENCERRADO
 
 Prestação de contas: prazo de PRAZO_PRESTACAO_DIAS (60) depois da volta, com
@@ -48,7 +53,7 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 
@@ -63,11 +68,12 @@ from app.config import (
     DIAS_EXPIRACAO_DEVOLVIDO,
     DIAS_LEMBRETE_DEVOLVIDO,
     DIAS_LEMBRETE_PRESTACAO,
+    LIMITE_ALIMENTACAO_DIA,
     LIMITE_REFEICAO_DIA,
     LIMITE_SOLICITACAO,
-    LOCAIS_REFEICAO,
     MAX_DESPESAS_VIAGEM,
     MAX_DIARIAS,
+    MAX_LINHAS_DIARIA,
     MOTIVOS,
     PRAZO_PRESTACAO_DIAS,
     VALOR_DIARIA,
@@ -75,7 +81,7 @@ from app.config import (
 )
 from app.models.cadastros import CentroCusto, Empresa
 from app.models.cadastros import Usuario as CadastroUsuario
-from app.models.solicitacao import Despesa, Historico, Solicitacao
+from app.models.solicitacao import Despesa, Historico, LinhaDiaria, Solicitacao
 from app.services import arquivos, gestores, notificacoes
 from app.services.erros import NaoEncontrado, RegraNegocio, SemPermissao
 from app.services.formatos import moeda
@@ -92,14 +98,22 @@ TIPO_ADIANTAMENTO = "adiantamento"
 ROTULO_TIPO = {
     TIPO_ALIMENTACAO: "Alimentação",
     TIPO_DIVERSAS: "Despesas diversas",
-    TIPO_VIAGEM: "Viagem",
-    TIPO_ADIANTAMENTO: "Adiantamento de viagem",
+    TIPO_VIAGEM: "Diária de Viagem",
+    TIPO_ADIANTAMENTO: "Adiantamento",
 }
-# Tipos com uma nota só, no formulário simples (data, valor, descrição, arquivo).
-TIPOS_UMA_NOTA = (TIPO_ALIMENTACAO, TIPO_DIVERSAS)
-CATEGORIA_UMA_NOTA = {TIPO_ALIMENTACAO: "refeicao", TIPO_DIVERSAS: "diversos"}
+# "Reembolso de despesas - Prestação de Contas" (Thais, 15/10): alimentação ou
+# despesas diversas, com uma ou mais notas. Na alimentação cada nota tem a
+# categoria (lista das notas de viagem); nas diversas, todas são `diversos`.
+TIPOS_DESPESAS = (TIPO_ALIMENTACAO, TIPO_DIVERSAS)
+CATEGORIA_DIVERSAS = "diversos"
+# Categorias que contam para o limite diário de refeição da alimentação (R$ 40).
+CATEGORIAS_REFEICAO_ALIMENTACAO = ("refeicao", "almoco_pinda")
 # Despesa especial do adiantamento: o comprovante da transferência da sobra.
 COMPROVANTE_DEVOLUCAO = "comprovante_devolucao"
+# Linhas da Diária de Viagem (Thais, 15/10): valor integral (fixo) ou parcial (informado).
+DIARIA_INTEGRAL = "integral"
+DIARIA_PARCIAL = "parcial"
+TIPOS_DIARIA = (DIARIA_INTEGRAL, DIARIA_PARCIAL)
 
 EM_CONFERENCIA = "em_conferencia"
 AGUARDANDO_GESTOR = "aguardando_gestor"
@@ -107,6 +121,8 @@ AGUARDANDO_PAGAMENTO = "aguardando_pagamento"
 PAGO = "pago"
 DEVOLVIDO = "devolvido"
 CANCELADO = "cancelado"
+# Recusa do gestor: final (Thais, 15/10).
+RECUSADO = "recusado"
 # Só do adiantamento (depois do pagamento das diárias)
 AGUARDANDO_PRESTACAO = "aguardando_prestacao"
 PRESTACAO_EM_CONFERENCIA = "prestacao_em_conferencia"
@@ -118,10 +134,11 @@ DIFERENCA_AGUARDANDO_PAGAMENTO = "diferenca_aguardando_pagamento"
 ENCERRADO = "encerrado"
 
 ROTULO_STATUS = {
-    EM_CONFERENCIA: "Em conferência (financeiro)",
-    AGUARDANDO_GESTOR: "Aguardando aprovação do gestor",
-    AGUARDANDO_PAGAMENTO: "Aprovada — aguardando pagamento",
-    PAGO: "Paga",
+    EM_CONFERENCIA: "Pendente de conferência",
+    AGUARDANDO_GESTOR: "Pendente de aprovação",
+    AGUARDANDO_PAGAMENTO: "Aguardando pagamento",
+    PAGO: "Finalizado - Pago",
+    RECUSADO: "Finalizado - Recusado",
     DEVOLVIDO: "Devolvida para correção",
     CANCELADO: "Cancelada",
     AGUARDANDO_PRESTACAO: "Paga — aguardando prestação de contas",
@@ -150,13 +167,12 @@ SISTEMA = Usuario(email="sistema", nome="Sistema", papeis=(), via="sistema")
 class Beneficiario:
     """Pedido em nome de outra pessoa (Thais, 13/10): qualquer colaborador pode
     pedir; o dinheiro vai para o beneficiário e quem aprova é o gestor dele.
-    Matrícula, nome e centro de custo só são usados se o beneficiário ainda não
-    tiver o perfil completo no sistema (nunca entrou)."""
+    Nome e matrícula só são usados se o beneficiário ainda não tiver a
+    matrícula no sistema (nunca entrou). O centro de custo é o do pedido."""
 
     email: str
     nome: str = ""
     matricula: str = ""
-    centro_custo_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -166,23 +182,23 @@ class _Pessoa:
     email: str
     nome: str
     matricula: str
-    centro_custo: str
     eh_gestor: bool
     criado_por_email: str | None = None
     criado_por_nome: str | None = None
 
 
 @dataclass(frozen=True)
-class DadosAlimentacao:
-    data_despesa: date
-    valor: Decimal
+class DadosDespesas:
+    """Reembolso de despesas (alimentação ou diversas): uma ou mais notas."""
+
     descricao: str
     empresa_id: int
     gestor_email: str | None
+    itens: tuple[ItemViagem, ...]
     beneficiario: Beneficiario | None = None
     motivo: str = ""
-    # Só alimentação: chave de LOCAIS_REFEICAO (pinda, maraba, outro).
-    local: str = ""
+    # Escolhido no pedido. Obrigatório ao criar; na correção, None mantém o atual.
+    centro_custo_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -210,22 +226,35 @@ class DadosAdiantamento:
     descricao: str  # justificativa
     empresa_id: int
     gestor_email: str | None
-    # Diária complementar (quem recebe auxílio refeição): valor informado pelo
-    # colaborador, SOMADO às diárias normais (Thais, 13/10). None = sem complementar.
-    complementar: Decimal | None = None
+    # Valor pedido, informado pelo colaborador (Thais, 15/10). Sem cálculo por dia.
+    valor: Decimal
     beneficiario: Beneficiario | None = None
 
 
 @dataclass(frozen=True)
-class DadosViagem:
+class ItemDiaria:
+    """Uma linha da Diária de Viagem. `valor` só vale no tipo "parcial"; no
+    "integral" o valor é o fixo da política (VALOR_DIARIA)."""
+
+    tipo: str
+    quantidade: int
+    valor: Decimal | None = None
+
+
+@dataclass(frozen=True)
+class DadosDiaria:
     destino: str
     inicio: date
     fim: date
-    descricao: str  # justificativa
+    descricao: str  # motivo da viagem
     empresa_id: int
     gestor_email: str | None
-    itens: tuple[ItemViagem, ...]
+    linhas: tuple[ItemDiaria, ...]
+    # "Viagem internacional?" Internacional não tem diária (Thais, 15/10).
+    internacional: bool = False
     beneficiario: Beneficiario | None = None
+    # Escolhido no pedido. Obrigatório ao criar; na correção, None mantém o atual.
+    centro_custo_id: int | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -305,7 +334,7 @@ def acoes_disponiveis(sol: Solicitacao, usuario: Usuario) -> list[str]:
     if sol.status in (EM_CONFERENCIA, PRESTACAO_EM_CONFERENCIA) and confere:
         acoes += ["conferir", "devolver"]
     if sol.status in FILA_GESTOR and usuario.tem(GESTOR) and sol.gestor_email == usuario.email:
-        acoes += ["aprovar", "devolver"]
+        acoes += ["aprovar", "recusar"]
     if sol.status in FILA_PAGAMENTO and financeiro:
         acoes.append("pagar")
     if sol.status == DEVOLVIDO and dono:
@@ -346,14 +375,18 @@ def criar_alimentacao(
     settings: Settings,
     armazenamento: Armazenamento,
     usuario: Usuario,
-    dados: DadosAlimentacao,
-    arquivo: arquivos.ArquivoValidado,
+    dados: DadosDespesas,
+    arquivos_enviados: list[arquivos.ArquivoValidado],
     tipo: str = TIPO_ALIMENTACAO,
 ) -> Solicitacao:
-    """Alimentação ou despesas diversas: uma nota, mesmo fluxo."""
-    if tipo not in TIPOS_UMA_NOTA:
+    """Reembolso de despesas - Prestação de Contas (Thais, 15/10): alimentação
+    ou despesas diversas, com uma ou mais notas, mesmo fluxo."""
+    if tipo not in TIPOS_DESPESAS:
         raise RegraNegocio("Tipo de solicitação inválido.")
+    dados = _normalizar_despesas(dados, tipo)
     pessoa = _pessoa_do_pedido(db, settings, usuario, dados.beneficiario)
+    # Na criação nenhuma nota existe ainda: qualquer `id` é recusado.
+    _validar_despesas(dados, tipo, arquivos_enviados, existentes=set())
 
     agora = agora_utc()
     pula_gestor = pessoa.eh_gestor
@@ -364,8 +397,8 @@ def criar_alimentacao(
             db, settings, pessoa.email, pessoa.criado_por_email, dados.gestor_email
         )
     )
-    _validar_basico(dados, tipo)
     empresa = _empresa(db, dados.empresa_id)
+    centro = _centro_custo(db, dados.centro_custo_id)
 
     sol = Solicitacao(
         tipo=tipo,
@@ -375,16 +408,15 @@ def criar_alimentacao(
         criado_por_email=pessoa.criado_por_email,
         criado_por_nome=pessoa.criado_por_nome,
         matricula=pessoa.matricula,
-        centro_custo=pessoa.centro_custo,
+        centro_custo=centro.rotulo,
         empresa=empresa.nome,
         gestor_email=gestor.email if gestor else None,
         gestor_nome=gestor.nome if gestor else None,
         pula_gestor=pula_gestor,
         descricao=dados.descricao.strip(),
         motivo=dados.motivo,
-        local_refeicao=dados.local if tipo == TIPO_ALIMENTACAO else None,
-        valor_total=dados.valor,
-        alerta_limite=_alerta(dados.valor, tipo, dados.local),
+        valor_total=_total(dados.itens),
+        alerta_limite=_alerta_despesas(dados.itens, tipo),
         enviado_em=agora,
         ultima_movimentacao_em=agora,
     )
@@ -392,10 +424,15 @@ def criar_alimentacao(
     db.flush()  # gera o id
     sol.codigo = f"REE-{sol.id:06d}"
 
-    chave = arquivos.salvar(armazenamento, arquivo, sol.codigo, agora)
+    salvas: list[str] = []
     try:
-        sol.despesas.append(_despesa(dados, arquivo, chave, agora, CATEGORIA_UMA_NOTA[tipo]))
+        for item in dados.itens:
+            arquivo = arquivos_enviados[item.arquivo or 0]
+            chave = arquivos.salvar(armazenamento, arquivo, sol.codigo, agora)
+            salvas.append(chave)
+            sol.despesas.append(_despesa_viagem(item, arquivo, chave, agora))
         _registrar(db, sol, "enviado", None, EM_CONFERENCIA, usuario, None, agora)
+        _lembrar_centro_custo(db, usuario, centro)
         notificacoes.enfileirar(
             db,
             settings,
@@ -408,7 +445,8 @@ def criar_alimentacao(
         db.commit()
     except Exception:
         db.rollback()
-        armazenamento.remover(chave)
+        for chave in salvas:
+            armazenamento.remover(chave)
         raise
     return sol
 
@@ -419,170 +457,33 @@ def reenviar(
     armazenamento: Armazenamento,
     usuario: Usuario,
     sol_id: int,
-    dados: DadosAlimentacao,
-    arquivo: arquivos.ArquivoValidado | None,
+    dados: DadosDespesas,
+    arquivos_enviados: list[arquivos.ArquivoValidado],
 ) -> Solicitacao:
+    """Correção de um reembolso de despesas devolvido. A lista de notas enviada
+    substitui a anterior (como na viagem): com `id` mantém, sem `id` é nova, e as
+    que não vierem saem. Vale também para pedidos antigos, de uma nota só."""
     sol = obter(db, usuario, sol_id)
     _exigir(eh_dono(sol, usuario), "Só quem pediu pode corrigir.")
     _exigir_status(sol, DEVOLVIDO)
-    if sol.tipo not in TIPOS_UMA_NOTA:
+    if sol.tipo not in TIPOS_DESPESAS:
         raise RegraNegocio("Esta solicitação não é de alimentação (nem de despesas diversas).")
-    _validar_basico(dados, sol.tipo)
-    if not sol.pula_gestor:
-        gestor = _validar_gestor(
-            db, settings, sol.solicitante_email, sol.criado_por_email, dados.gestor_email
-        )
-        sol.gestor_email, sol.gestor_nome = gestor.email, gestor.nome
-    sol.empresa = _empresa(db, dados.empresa_id).nome
-    sol.descricao = dados.descricao.strip()
-    sol.valor_total = dados.valor
-    sol.motivo = dados.motivo
-    sol.local_refeicao = dados.local if sol.tipo == TIPO_ALIMENTACAO else None
-    sol.alerta_limite = _alerta(dados.valor, sol.tipo, dados.local)
-
-    agora = agora_utc()
-    despesa = sol.despesas[0]
-    despesa.data_despesa, despesa.valor = dados.data_despesa, dados.valor
-    chave_antiga = None
-    if arquivo is not None:
-        chave_antiga = despesa.arquivo_chave
-        despesa.arquivo_chave = arquivos.salvar(armazenamento, arquivo, sol.codigo or "", agora)
-        despesa.arquivo_nome, despesa.arquivo_tipo = arquivo.nome, arquivo.tipo
-        despesa.arquivo_tamanho = len(arquivo.conteudo)
-
-    sol.motivo_devolucao = None
-    sol.devolvido_por = sol.devolvido_em = sol.lembrete_expiracao_em = None
-    _mudar(db, sol, EM_CONFERENCIA, "reenviado", usuario, None, agora)
-    notificacoes.enfileirar(
-        db,
-        settings,
-        sol,
-        notificacoes.emails_financeiro(db),
-        "Solicitação corrigida para conferir",
-        f"{usuario.nome} corrigiu e reenviou a solicitação.",
-    )
-    try:
-        db.commit()
-    except Exception:
-        db.rollback()
-        if arquivo is not None:
-            armazenamento.remover(despesa.arquivo_chave)
-        raise
-    if chave_antiga:
-        armazenamento.remover(chave_antiga)
-    return sol
-
-
-# ---------------------------------------------------------------------------
-# Reembolso de viagem (várias notas)
-# ---------------------------------------------------------------------------
-def criar_viagem(
-    db: Session,
-    settings: Settings,
-    armazenamento: Armazenamento,
-    usuario: Usuario,
-    dados: DadosViagem,
-    arquivos_enviados: list[arquivos.ArquivoValidado],
-) -> Solicitacao:
-    pessoa = _pessoa_do_pedido(db, settings, usuario, dados.beneficiario)
-    # Na criação nenhuma nota existe ainda: qualquer `id` é recusado.
-    _validar_viagem(dados, arquivos_enviados, existentes=set())
-
-    agora = agora_utc()
-    pula_gestor = pessoa.eh_gestor
-    gestor = (
-        None
-        if pula_gestor
-        else _validar_gestor(
-            db, settings, pessoa.email, pessoa.criado_por_email, dados.gestor_email
-        )
-    )
-    empresa = _empresa(db, dados.empresa_id)
-
-    sol = Solicitacao(
-        tipo=TIPO_VIAGEM,
-        status=EM_CONFERENCIA,
-        solicitante_email=pessoa.email,
-        solicitante_nome=pessoa.nome,
-        criado_por_email=pessoa.criado_por_email,
-        criado_por_nome=pessoa.criado_por_nome,
-        matricula=pessoa.matricula,
-        centro_custo=pessoa.centro_custo,
-        empresa=empresa.nome,
-        gestor_email=gestor.email if gestor else None,
-        gestor_nome=gestor.nome if gestor else None,
-        pula_gestor=pula_gestor,
-        descricao=dados.descricao.strip(),
-        destino=dados.destino.strip(),
-        viagem_inicio=dados.inicio,
-        viagem_fim=dados.fim,
-        valor_total=_total(dados.itens),
-        alerta_limite=_alerta_viagem(dados.itens),
-        enviado_em=agora,
-        ultima_movimentacao_em=agora,
-    )
-    db.add(sol)
-    db.flush()
-    sol.codigo = f"REE-{sol.id:06d}"
-
-    salvas: list[str] = []
-    try:
-        for item in dados.itens:
-            arquivo = arquivos_enviados[item.arquivo or 0]
-            chave = arquivos.salvar(armazenamento, arquivo, sol.codigo, agora)
-            salvas.append(chave)
-            sol.despesas.append(_despesa_viagem(item, arquivo, chave, agora))
-        _registrar(db, sol, "enviado", None, EM_CONFERENCIA, usuario, None, agora)
-        notificacoes.enfileirar(
-            db,
-            settings,
-            sol,
-            notificacoes.emails_financeiro(db),
-            "Nova solicitação para conferir",
-            f"{_autor(usuario, sol)} enviou um reembolso de viagem ({dados.destino.strip()}) "
-            "para conferência.",
-        )
-        db.commit()
-    except Exception:
-        db.rollback()
-        for chave in salvas:
-            armazenamento.remover(chave)
-        raise
-    return sol
-
-
-def reenviar_viagem(
-    db: Session,
-    settings: Settings,
-    armazenamento: Armazenamento,
-    usuario: Usuario,
-    sol_id: int,
-    dados: DadosViagem,
-    arquivos_enviados: list[arquivos.ArquivoValidado],
-) -> Solicitacao:
-    """Correção de um reembolso de viagem devolvido.
-
-    A lista enviada substitui a anterior: notas com `id` são mantidas (e
-    atualizadas), notas sem `id` são novas, e as que não vierem são removidas.
-    """
-    sol = obter(db, usuario, sol_id)
-    _exigir(eh_dono(sol, usuario), "Só quem pediu pode corrigir.")
-    _exigir_status(sol, DEVOLVIDO)
-    if sol.tipo != TIPO_VIAGEM:
-        raise RegraNegocio("Esta solicitação não é de viagem.")
+    dados = _normalizar_despesas(dados, sol.tipo)
     atuais = {d.id: d for d in sol.despesas}
-    _validar_viagem(dados, arquivos_enviados, existentes=set(atuais))
+    _validar_despesas(dados, sol.tipo, arquivos_enviados, existentes=set(atuais))
     if not sol.pula_gestor:
         gestor = _validar_gestor(
             db, settings, sol.solicitante_email, sol.criado_por_email, dados.gestor_email
         )
         sol.gestor_email, sol.gestor_nome = gestor.email, gestor.nome
     sol.empresa = _empresa(db, dados.empresa_id).nome
+    if dados.centro_custo_id is not None:
+        sol.centro_custo = _centro_custo(db, dados.centro_custo_id).rotulo
     sol.descricao = dados.descricao.strip()
-    sol.destino = dados.destino.strip()
-    sol.viagem_inicio, sol.viagem_fim = dados.inicio, dados.fim
+    sol.motivo = dados.motivo
+    sol.local_refeicao = None  # o local saiu do formulário (Thais, 15/10)
     sol.valor_total = _total(dados.itens)
-    sol.alerta_limite = _alerta_viagem(dados.itens)
+    sol.alerta_limite = _alerta_despesas(dados.itens, sol.tipo)
 
     agora = agora_utc()
     novas_chaves: list[str] = []
@@ -618,6 +519,236 @@ def reenviar_viagem(
     for chave in chaves_antigas:
         armazenamento.remover(chave)
     return sol
+
+
+def _normalizar_despesas(dados: DadosDespesas, tipo: str) -> DadosDespesas:
+    """Despesas diversas não têm categoria por nota: todas viram `diversos`."""
+    if tipo != TIPO_DIVERSAS:
+        return dados
+    return replace(
+        dados, itens=tuple(replace(i, categoria=CATEGORIA_DIVERSAS) for i in dados.itens)
+    )
+
+
+def _validar_despesas(
+    dados: DadosDespesas,
+    tipo: str,
+    arquivos_enviados: list[arquivos.ArquivoValidado],
+    existentes: set[int],
+) -> None:
+    if dados.motivo not in MOTIVOS:
+        raise RegraNegocio("Escolha o motivo da despesa.")
+    if not dados.descricao.strip():
+        raise RegraNegocio("Descreva a despesa.")
+    if len(dados.descricao) > 500:
+        raise RegraNegocio("Descrição muito longa (máximo 500 caracteres).")
+    categorias = CATEGORIAS_VIAGEM if tipo == TIPO_ALIMENTACAO else {CATEGORIA_DIVERSAS: ""}
+    _validar_itens(dados.itens, arquivos_enviados, existentes, categorias)
+
+
+def _alerta_despesas(itens: tuple[ItemViagem, ...], tipo: str) -> str | None:
+    """Só avisa (não bloqueia). Alimentação: refeição acima de R$ 40 no dia,
+    somando as notas do mesmo dia (Thais, 15/10). Os dois tipos: total acima
+    do limite por solicitação."""
+    alertas = []
+    if tipo == TIPO_ALIMENTACAO:
+        por_dia: dict[date, Decimal] = {}
+        for item in itens:
+            if item.categoria in CATEGORIAS_REFEICAO_ALIMENTACAO:
+                dia = item.data_despesa
+                por_dia[dia] = por_dia.get(dia, Decimal("0")) + item.valor
+        dias = sorted(d for d, v in por_dia.items() if v > LIMITE_ALIMENTACAO_DIA)
+        if dias:
+            lista = ", ".join(f"{d:%d/%m}" for d in dias)
+            alertas.append(
+                f"Refeição acima do limite da política ({moeda(LIMITE_ALIMENTACAO_DIA)} "
+                f"por dia) em {lista}."
+            )
+    if _total(itens) > LIMITE_SOLICITACAO:
+        alertas.append(f"Total acima do limite por solicitação ({moeda(LIMITE_SOLICITACAO)}).")
+    return " ".join(alertas) or None
+
+
+# ---------------------------------------------------------------------------
+# Diária de Viagem (linhas de valor integral ou parcial, sem notas)
+# ---------------------------------------------------------------------------
+def criar_diaria(
+    db: Session,
+    settings: Settings,
+    usuario: Usuario,
+    dados: DadosDiaria,
+) -> Solicitacao:
+    pessoa = _pessoa_do_pedido(db, settings, usuario, dados.beneficiario)
+    _validar_diaria(dados)
+
+    agora = agora_utc()
+    pula_gestor = pessoa.eh_gestor
+    gestor = (
+        None
+        if pula_gestor
+        else _validar_gestor(
+            db, settings, pessoa.email, pessoa.criado_por_email, dados.gestor_email
+        )
+    )
+    empresa = _empresa(db, dados.empresa_id)
+    centro = _centro_custo(db, dados.centro_custo_id)
+    total = _total_diaria(dados.linhas)
+
+    sol = Solicitacao(
+        tipo=TIPO_VIAGEM,
+        status=EM_CONFERENCIA,
+        solicitante_email=pessoa.email,
+        solicitante_nome=pessoa.nome,
+        criado_por_email=pessoa.criado_por_email,
+        criado_por_nome=pessoa.criado_por_nome,
+        matricula=pessoa.matricula,
+        centro_custo=centro.rotulo,
+        empresa=empresa.nome,
+        gestor_email=gestor.email if gestor else None,
+        gestor_nome=gestor.nome if gestor else None,
+        pula_gestor=pula_gestor,
+        descricao=dados.descricao.strip(),
+        destino=dados.destino.strip(),
+        viagem_inicio=dados.inicio,
+        viagem_fim=dados.fim,
+        viagem_internacional=False,
+        valor_total=total,
+        alerta_limite=_alerta_diaria(dados, total),
+        enviado_em=agora,
+        ultima_movimentacao_em=agora,
+    )
+    sol.linhas_diaria = _linhas_diaria(dados.linhas)
+    db.add(sol)
+    db.flush()
+    sol.codigo = f"REE-{sol.id:06d}"
+    _registrar(db, sol, "enviado", None, EM_CONFERENCIA, usuario, None, agora)
+    _lembrar_centro_custo(db, usuario, centro)
+    notificacoes.enfileirar(
+        db,
+        settings,
+        sol,
+        notificacoes.emails_financeiro(db),
+        "Nova solicitação para conferir",
+        f"{_autor(usuario, sol)} enviou uma diária de viagem ({dados.destino.strip()}) "
+        "para conferência.",
+    )
+    db.commit()
+    return sol
+
+
+def reenviar_diaria(
+    db: Session,
+    settings: Settings,
+    usuario: Usuario,
+    sol_id: int,
+    dados: DadosDiaria,
+) -> Solicitacao:
+    """Correção de uma diária devolvida: as linhas enviadas substituem as anteriores."""
+    sol = obter(db, usuario, sol_id)
+    _exigir(eh_dono(sol, usuario), "Só quem pediu pode corrigir.")
+    _exigir_status(sol, DEVOLVIDO)
+    if sol.tipo != TIPO_VIAGEM:
+        raise RegraNegocio("Esta solicitação não é de diária de viagem.")
+    if sol.despesas:
+        raise RegraNegocio(
+            "Este pedido é do modelo antigo de viagem (com notas). Abra um novo pedido: "
+            "a diária agora não leva notas; as despesas vão no Reembolso de despesas."
+        )
+    _validar_diaria(dados)
+    if not sol.pula_gestor:
+        gestor = _validar_gestor(
+            db, settings, sol.solicitante_email, sol.criado_por_email, dados.gestor_email
+        )
+        sol.gestor_email, sol.gestor_nome = gestor.email, gestor.nome
+    sol.empresa = _empresa(db, dados.empresa_id).nome
+    if dados.centro_custo_id is not None:
+        sol.centro_custo = _centro_custo(db, dados.centro_custo_id).rotulo
+    sol.descricao = dados.descricao.strip()
+    sol.destino = dados.destino.strip()
+    sol.viagem_inicio, sol.viagem_fim = dados.inicio, dados.fim
+    sol.viagem_internacional = False
+    sol.valor_total = _total_diaria(dados.linhas)
+    sol.alerta_limite = _alerta_diaria(dados, sol.valor_total)
+    sol.linhas_diaria.clear()
+    db.flush()
+    sol.linhas_diaria.extend(_linhas_diaria(dados.linhas))
+
+    agora = agora_utc()
+    sol.motivo_devolucao = None
+    sol.devolvido_por = sol.devolvido_em = sol.lembrete_expiracao_em = None
+    _mudar(db, sol, EM_CONFERENCIA, "reenviado", usuario, None, agora)
+    notificacoes.enfileirar(
+        db,
+        settings,
+        sol,
+        notificacoes.emails_financeiro(db),
+        "Solicitação corrigida para conferir",
+        f"{usuario.nome} corrigiu e reenviou a solicitação.",
+    )
+    db.commit()
+    return sol
+
+
+def _validar_diaria(dados: DadosDiaria) -> None:
+    if dados.internacional:
+        raise RegraNegocio(
+            "Viagem internacional não tem diária. Se precisar de valor antes de viajar, "
+            "peça um Adiantamento; as despesas com nota vão no Reembolso de despesas."
+        )
+    if not dados.destino.strip():
+        raise RegraNegocio("Informe o destino da viagem.")
+    if len(dados.destino) > 200:
+        raise RegraNegocio("Destino muito longo (máximo 200 caracteres).")
+    if dados.fim < dados.inicio:
+        raise RegraNegocio("O fim da viagem não pode ser antes do início.")
+    if not dados.descricao.strip():
+        raise RegraNegocio("Explique o motivo da viagem.")
+    if len(dados.descricao) > 500:
+        raise RegraNegocio("Motivo muito longo (máximo 500 caracteres).")
+    if not dados.linhas:
+        raise RegraNegocio("Inclua pelo menos uma linha de diária.")
+    if len(dados.linhas) > MAX_LINHAS_DIARIA:
+        raise RegraNegocio(f"Máximo de {MAX_LINHAS_DIARIA} linhas por solicitação.")
+    for n, linha in enumerate(dados.linhas, start=1):
+        if linha.tipo not in TIPOS_DIARIA:
+            raise RegraNegocio(f"Linha {n}: escolha Valor Integral ou Valor Parcial.")
+        if not 1 <= linha.quantidade <= MAX_DIARIAS:
+            raise RegraNegocio(
+                f"Linha {n}: a quantidade de diárias deve ficar entre 1 e {MAX_DIARIAS}."
+            )
+        if linha.tipo == DIARIA_PARCIAL and (linha.valor is None or linha.valor <= 0):
+            raise RegraNegocio(f"Linha {n}: informe o valor da diária parcial.")
+
+
+def _valor_linha(linha: ItemDiaria) -> Decimal:
+    if linha.tipo == DIARIA_INTEGRAL:
+        return VALOR_DIARIA
+    return linha.valor or Decimal("0.00")
+
+
+def _total_diaria(linhas: tuple[ItemDiaria, ...]) -> Decimal:
+    return sum((_valor_linha(i) * i.quantidade for i in linhas), Decimal("0.00"))
+
+
+def _linhas_diaria(linhas: tuple[ItemDiaria, ...]) -> list[LinhaDiaria]:
+    return [
+        LinhaDiaria(tipo=i.tipo, quantidade=i.quantidade, valor_unitario=_valor_linha(i))
+        for i in linhas
+    ]
+
+
+def _alerta_diaria(dados: DadosDiaria, total: Decimal) -> str | None:
+    """Alertas (não bloqueiam): mais diárias do que dias de viagem e total alto."""
+    alertas = []
+    dias = calcular_diarias(dados.inicio, dados.fim)
+    quantidade = sum(i.quantidade for i in dados.linhas)
+    if quantidade > dias:
+        alertas.append(
+            f"Quantidade de diárias ({quantidade}) maior que os dias da viagem ({dias})."
+        )
+    if total > LIMITE_SOLICITACAO:
+        alertas.append(f"Total acima do limite por solicitação ({moeda(LIMITE_SOLICITACAO)}).")
+    return " ".join(alertas) or None
 
 
 def _sincronizar_notas(
@@ -659,28 +790,13 @@ def _sincronizar_notas(
             despesa.arquivo_tamanho = len(arquivo.conteudo)
 
 
-def _validar_viagem(
-    dados: DadosViagem, arquivos_enviados: list[arquivos.ArquivoValidado], existentes: set[int]
-) -> None:
-    if not dados.destino.strip():
-        raise RegraNegocio("Informe o destino da viagem.")
-    if len(dados.destino) > 200:
-        raise RegraNegocio("Destino muito longo (máximo 200 caracteres).")
-    if dados.fim < dados.inicio:
-        raise RegraNegocio("O fim da viagem não pode ser antes do início.")
-    if not dados.descricao.strip():
-        raise RegraNegocio("Explique o motivo da viagem.")
-    if len(dados.descricao) > 500:
-        raise RegraNegocio("Justificativa muito longa (máximo 500 caracteres).")
-    _validar_itens(dados.itens, arquivos_enviados, existentes)
-
-
 def _validar_itens(
     itens: tuple[ItemViagem, ...],
     arquivos_enviados: list[arquivos.ArquivoValidado],
     existentes: set[int],
+    categorias: dict[str, str] = CATEGORIAS_VIAGEM,
 ) -> None:
-    """Notas de viagem (reembolso ou prestação de contas do adiantamento)."""
+    """Notas: viagem, prestação de contas do adiantamento e reembolso de despesas."""
     hoje = date.today()
     if not itens:
         raise RegraNegocio("Inclua pelo menos uma nota.")
@@ -690,7 +806,7 @@ def _validar_itens(
     usados: set[int] = set()
     ids: set[int] = set()
     for n, item in enumerate(itens, start=1):
-        if item.categoria not in CATEGORIAS_VIAGEM:
+        if item.categoria not in categorias:
             raise RegraNegocio(f"Nota {n}: categoria inválida.")
         if item.data_despesa > hoje:
             raise RegraNegocio(f"Nota {n}: a data não pode ser no futuro.")
@@ -716,6 +832,7 @@ def _total(itens: tuple[ItemViagem, ...]) -> Decimal:
 
 
 def _alerta_viagem(itens: tuple[ItemViagem, ...]) -> str | None:
+    """Alertas da prestação de contas do adiantamento (refeição por dia e total)."""
     alertas = []
     por_dia: dict[date, Decimal] = {}
     for item in itens:
@@ -760,7 +877,7 @@ def criar_adiantamento(
     dados: DadosAdiantamento,
 ) -> Solicitacao:
     pessoa = _pessoa_do_pedido(db, settings, usuario, dados.beneficiario)
-    diarias = _validar_adiantamento(dados)
+    _validar_adiantamento(dados)
 
     agora = agora_utc()
     pula_gestor = pessoa.eh_gestor
@@ -772,7 +889,7 @@ def criar_adiantamento(
         )
     )
     empresa = _empresa(db, dados.empresa_id)
-    valor = _valor_adiantamento(dados, diarias)
+    valor = dados.valor
     status = AGUARDANDO_PAGAMENTO if pula_gestor else AGUARDANDO_GESTOR
 
     sol = Solicitacao(
@@ -783,7 +900,7 @@ def criar_adiantamento(
         criado_por_email=pessoa.criado_por_email,
         criado_por_nome=pessoa.criado_por_nome,
         matricula=pessoa.matricula,
-        centro_custo=pessoa.centro_custo,
+        centro_custo=None,  # adiantamento não tem centro de custo (Thais, 15/10)
         empresa=empresa.nome,
         gestor_email=gestor.email if gestor else None,
         gestor_nome=gestor.nome if gestor else None,
@@ -792,8 +909,6 @@ def criar_adiantamento(
         destino=dados.destino.strip(),
         viagem_inicio=dados.inicio,
         viagem_fim=dados.fim,
-        diarias=diarias,
-        valor_complementar=dados.complementar,
         valor_total=valor,
         alerta_limite=_alerta_total(valor),
         enviado_em=agora,
@@ -815,13 +930,15 @@ def reenviar_adiantamento(
     sol_id: int,
     dados: DadosAdiantamento,
 ) -> Solicitacao:
-    """Correção do pedido devolvido pelo gestor: volta para o gestor."""
+    """Correção de um pedido devolvido antes de 15/10 (o gestor devolvia).
+
+    Hoje o gestor só aprova ou recusa; fica para os pedidos antigos."""
     sol = obter(db, usuario, sol_id)
     _exigir(eh_dono(sol, usuario), "Só quem pediu pode corrigir.")
     _exigir_status(sol, DEVOLVIDO)
     if sol.tipo != TIPO_ADIANTAMENTO:
         raise RegraNegocio("Esta solicitação não é de adiantamento.")
-    diarias = _validar_adiantamento(dados)
+    _validar_adiantamento(dados)
     if not sol.pula_gestor:
         gestor = _validar_gestor(
             db, settings, sol.solicitante_email, sol.criado_por_email, dados.gestor_email
@@ -831,9 +948,9 @@ def reenviar_adiantamento(
     sol.descricao = dados.descricao.strip()
     sol.destino = dados.destino.strip()
     sol.viagem_inicio, sol.viagem_fim = dados.inicio, dados.fim
-    sol.diarias = diarias
-    sol.valor_complementar = dados.complementar
-    sol.valor_total = _valor_adiantamento(dados, diarias)
+    sol.diarias = None
+    sol.valor_complementar = None
+    sol.valor_total = dados.valor
     sol.alerta_limite = _alerta_total(sol.valor_total)
 
     agora = agora_utc()
@@ -1114,8 +1231,7 @@ def _decidir_diferenca(
 ) -> Solicitacao:
     agora = agora_utc()
     if not aprovar:
-        # As notas precisam mudar: volta para o colaborador e depois para a Thais.
-        return _devolver(db, settings, sol, usuario, comentario, agora, para=PRESTACAO_DEVOLVIDA)
+        return _recusar(db, settings, sol, usuario, comentario, agora)
     sol.diferenca_aprovada_por, sol.diferenca_aprovada_em = usuario.nome, agora
     _mudar(
         db, sol, DIFERENCA_AGUARDANDO_PAGAMENTO, "diferenca_aprovada", usuario, comentario, agora
@@ -1218,12 +1334,14 @@ def _avisar_pedido_adiantamento(
 
 
 def _descrever_diarias(sol: Solicitacao) -> str:
+    if sol.diarias is None:  # pedido novo: valor informado pelo colaborador
+        return moeda(sol.valor_total)
     if sol.valor_complementar is not None:
         return f"{sol.diarias} diária(s) + diária complementar de {moeda(sol.valor_complementar)}"
     return f"{sol.diarias} diária(s)"
 
 
-def _validar_adiantamento(dados: DadosAdiantamento) -> int:
+def _validar_adiantamento(dados: DadosAdiantamento) -> None:
     if not dados.destino.strip():
         raise RegraNegocio("Informe o destino da viagem.")
     if len(dados.destino) > 200:
@@ -1234,20 +1352,8 @@ def _validar_adiantamento(dados: DadosAdiantamento) -> int:
         raise RegraNegocio("Explique o motivo da viagem.")
     if len(dados.descricao) > 500:
         raise RegraNegocio("Justificativa muito longa (máximo 500 caracteres).")
-    if dados.complementar is not None and dados.complementar <= 0:
-        raise RegraNegocio("Informe o valor da diária complementar.")
-    diarias = calcular_diarias(dados.inicio, dados.fim)
-    if diarias > MAX_DIARIAS:
-        raise RegraNegocio(
-            f"Período longo demais ({diarias} dias). Confira as datas "
-            f"(máximo {MAX_DIARIAS} diárias)."
-        )
-    return diarias
-
-
-def _valor_adiantamento(dados: DadosAdiantamento, diarias: int) -> Decimal:
-    """Diárias normais + diária complementar (se houver), que SOMA (Thais, 13/10)."""
-    return VALOR_DIARIA * diarias + (dados.complementar or Decimal("0.00"))
+    if dados.valor <= 0:
+        raise RegraNegocio("Informe o valor do adiantamento.")
 
 
 def _alerta_total(valor: Decimal) -> str | None:
@@ -1315,7 +1421,7 @@ def decidir_gestor(
     _exigir_status(sol, AGUARDANDO_GESTOR)
     agora = agora_utc()
     if not aprovar:
-        return _devolver(db, settings, sol, usuario, comentario, agora)
+        return _recusar(db, settings, sol, usuario, comentario, agora)
 
     sol.aprovado_por, sol.aprovado_em = usuario.nome, agora
     _mudar(db, sol, AGUARDANDO_PAGAMENTO, "aprovado", usuario, comentario, agora)
@@ -1509,6 +1615,34 @@ def _devolver(
     return sol
 
 
+def _recusar(
+    db: Session,
+    settings: Settings,
+    sol: Solicitacao,
+    usuario: Usuario,
+    comentario: str | None,
+    agora: datetime,
+) -> Solicitacao:
+    """Recusa do gestor: finaliza o pedido (Thais, 15/10). Para tentar de novo,
+    o colaborador abre um pedido novo."""
+    motivo = (comentario or "").strip()
+    if not motivo:
+        raise RegraNegocio("Explique o motivo da recusa.")
+    sol.recusado_por, sol.recusado_em, sol.motivo_recusa = usuario.nome, agora, motivo
+    _mudar(db, sol, RECUSADO, "recusado", usuario, motivo, agora)
+    notificacoes.enfileirar(
+        db,
+        settings,
+        sol,
+        interessados(sol),
+        "Solicitação recusada pelo gestor",
+        f"{usuario.nome} recusou: {motivo}\nO pedido foi finalizado. "
+        "Se quiser tentar de novo, abra um pedido novo.",
+    )
+    db.commit()
+    return sol
+
+
 def _mudar(
     db: Session,
     sol: Solicitacao,
@@ -1547,32 +1681,18 @@ def _registrar(
     )
 
 
-def _validar_basico(dados: DadosAlimentacao, tipo: str = TIPO_ALIMENTACAO) -> None:
-    if dados.motivo not in MOTIVOS:
-        raise RegraNegocio("Escolha o motivo da despesa.")
-    if tipo == TIPO_ALIMENTACAO and dados.local not in LOCAIS_REFEICAO:
-        raise RegraNegocio("Escolha onde foi a refeição.")
-    if dados.data_despesa > date.today():
-        raise RegraNegocio("A data da despesa não pode ser no futuro.")
-    if not dados.descricao.strip():
-        raise RegraNegocio("Descreva a despesa.")
-    if len(dados.descricao) > 500:
-        raise RegraNegocio("Descrição muito longa (máximo 500 caracteres).")
-
-
 def _pessoa_do_pedido(
     db: Session, settings: Settings, usuario: Usuario, beneficiario: Beneficiario | None
 ) -> _Pessoa:
     """Quem recebe o reembolso: o próprio usuário ou o beneficiário informado."""
     if beneficiario is None or beneficiario.email.strip().lower() == usuario.email:
         perfil = db.scalar(select(CadastroUsuario).where(CadastroUsuario.email == usuario.email))
-        if perfil is None or not perfil.perfil_completo or perfil.centro_custo is None:
-            raise RegraNegocio("Complete seu perfil (matrícula e centro de custo) antes de pedir.")
+        if perfil is None or not perfil.perfil_completo:
+            raise RegraNegocio("Complete seu perfil (matrícula) antes de pedir.")
         return _Pessoa(
             email=usuario.email,
             nome=usuario.nome,
             matricula=perfil.matricula or "",
-            centro_custo=perfil.centro_custo.rotulo,
             eh_gestor=usuario.tem(GESTOR),
         )
 
@@ -1583,9 +1703,9 @@ def _pessoa_do_pedido(
     eh_gestor = (cadastro is not None and GESTOR in cadastro.lista_papeis) or (
         gestores.buscar(db, settings, email) is not None
     )
-    if cadastro is not None and cadastro.perfil_completo and cadastro.centro_custo:
+    if cadastro is not None and cadastro.perfil_completo:
         # Já usa o sistema: vale o perfil dela (o que foi digitado é ignorado).
-        nome, matricula, centro = cadastro.nome, cadastro.matricula or "", cadastro.centro_custo
+        nome, matricula = cadastro.nome, cadastro.matricula or ""
     else:
         nome = beneficiario.nome.strip() or (cadastro.nome if cadastro else "")
         matricula = beneficiario.matricula.strip()
@@ -1593,18 +1713,10 @@ def _pessoa_do_pedido(
             raise RegraNegocio("Informe o nome da pessoa do pedido.")
         if not matricula or len(matricula) > 30:
             raise RegraNegocio("Informe a matrícula da pessoa do pedido.")
-        centro = (
-            db.get(CentroCusto, beneficiario.centro_custo_id)
-            if beneficiario.centro_custo_id
-            else None
-        )
-        if centro is None or not centro.ativo:
-            raise RegraNegocio("Escolha o centro de custo da pessoa do pedido.")
     return _Pessoa(
         email=email,
         nome=nome,
         matricula=matricula,
-        centro_custo=centro.rotulo,
         eh_gestor=eh_gestor,
         criado_por_email=usuario.email,
         criado_por_nome=usuario.nome,
@@ -1647,37 +1759,19 @@ def _empresa(db: Session, empresa_id: int) -> Empresa:
     return empresa
 
 
-def _alerta(valor: Decimal, tipo: str = TIPO_ALIMENTACAO, local: str = "outro") -> str | None:
-    """Limite de refeição (só alimentação), conforme o local escolhido."""
-    if tipo != TIPO_ALIMENTACAO:
-        return None
-    rotulo, limite = LOCAIS_REFEICAO.get(local, LOCAIS_REFEICAO["outro"])
-    if valor > limite:
-        if local in ("pinda", "maraba"):
-            return (
-                f"Acima do limite diário de refeição da política para {rotulo} ({moeda(limite)})."
-            )
-        return f"Acima do limite diário de refeição da política ({moeda(limite)})."
-    return None
+def _centro_custo(db: Session, centro_custo_id: int | None) -> CentroCusto:
+    centro = db.get(CentroCusto, centro_custo_id) if centro_custo_id else None
+    if centro is None or not centro.ativo:
+        raise RegraNegocio("Escolha o centro de custo.")
+    return centro
 
 
-def _despesa(
-    dados: DadosAlimentacao,
-    arquivo: arquivos.ArquivoValidado,
-    chave: str,
-    agora: datetime,
-    categoria: str = "refeicao",
-) -> Despesa:
-    return Despesa(
-        categoria=categoria,
-        data_despesa=dados.data_despesa,
-        valor=dados.valor,
-        arquivo_chave=chave,
-        arquivo_nome=arquivo.nome,
-        arquivo_tipo=arquivo.tipo,
-        arquivo_tamanho=len(arquivo.conteudo),
-        criado_em=agora,
-    )
+def _lembrar_centro_custo(db: Session, usuario: Usuario, centro: CentroCusto) -> None:
+    """Guarda o último centro de custo usado por quem preencheu, para sugerir
+    no próximo pedido (Thais, 15/10: vem preenchido, mas dá para trocar)."""
+    cadastro = db.scalar(select(CadastroUsuario).where(CadastroUsuario.email == usuario.email))
+    if cadastro is not None:
+        cadastro.centro_custo_id = centro.id
 
 
 def _exigir(condicao: bool, mensagem: str) -> None:

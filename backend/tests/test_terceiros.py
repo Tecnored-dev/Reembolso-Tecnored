@@ -20,6 +20,9 @@ from tests.test_alimentacao import (
     THAIS,
     decidir,
     entrar,
+    enviar,
+    nota_despesa,
+    reenviar,
 )
 from tests.test_alimentacao import cenario as cenario  # fixture reaproveitada
 
@@ -36,21 +39,12 @@ def com_perfil(cliente, email, nome, matricula, papeis=""):
 
 def alimentacao(cliente, quem=COLAB, papeis="", gestor=GESTOR, **benef):
     entrar(cliente, quem, papeis)
-    dados = {
-        "data_despesa": HOJE.isoformat(),
-        "valor": "40,00",
-        "descricao": "Almoço na visita",
-        "motivo": "Visita técnica",
-        "local_refeicao": "outro",
-        "empresa_id": "1",
+    return enviar(
+        cliente,
+        valor="40,00",
+        gestor=gestor,
+        descricao="Almoço na visita",
         **{f"beneficiario_{k}": str(v) for k, v in benef.items()},
-    }
-    if gestor:
-        dados["gestor_email"] = gestor
-    return cliente.post(
-        "/api/solicitacoes/alimentacao",
-        data=dados,
-        files={"arquivo": ("nota.jpg", JPG, "image/jpeg")},
     )
 
 
@@ -64,9 +58,10 @@ def test_beneficiario_que_ja_usa_o_sistema(cenario, db):
     r = alimentacao(cenario, email=BENEF, matricula="digitada-errada", nome="Outro Nome")
     assert r.status_code == 201, r.text
     sol = r.json()
-    # quem recebe é a beneficiária, com o perfil DELA (o que foi digitado é ignorado)
+    # quem recebe é a beneficiária, com a matrícula DELA (o que foi digitado é
+    # ignorado); o centro de custo é o escolhido no pedido (Thais, 15/10)
     assert sol["solicitante_email"] == BENEF and sol["solicitante_nome"] == "Bia"
-    assert sol["matricula"] == "5555" and sol["centro_custo"] == "4110 - CONTROLADORIA"
+    assert sol["matricula"] == "5555" and sol["centro_custo"] == "3350 - T.I / T.A"
     assert sol["criado_por_email"] == COLAB and sol["criado_por_nome"] == "colab"
     assert sol["gestor_email"] == GESTOR
     # o financeiro recebe o aviso dizendo em nome de quem
@@ -79,19 +74,10 @@ def test_beneficiario_que_nunca_entrou_exige_dados(cenario):
     assert r.status_code == 400 and "nome da pessoa" in r.json()["detail"]
     r = alimentacao(cenario, email=NOVATO, nome="Novato")
     assert "matrícula da pessoa" in r.json()["detail"]
-    r = alimentacao(cenario, email=NOVATO, nome="Novato", matricula="7777")
-    assert "centro de custo da pessoa" in r.json()["detail"]
-    r = alimentacao(cenario, email=NOVATO, nome="Novato", matricula="7777", centro_custo_id=99)
-    assert "centro de custo da pessoa" in r.json()["detail"]
-    r = alimentacao(cenario, email="sem-arroba", nome="X", matricula="1", centro_custo_id=1)
+    r = alimentacao(cenario, email="sem-arroba", nome="X", matricula="1")
     assert "E-mail da pessoa do pedido inválido" in r.json()["detail"]
-    r = alimentacao(
-        cenario,
-        email=" Novato@Tecnored.com.br ",
-        nome="Novato",
-        matricula="7777",
-        centro_custo_id=1,
-    )
+    # O centro de custo não é mais da pessoa: basta nome e matrícula.
+    r = alimentacao(cenario, email=" Novato@Tecnored.com.br ", nome="Novato", matricula="7777")
     assert r.status_code == 201, r.text
     sol = r.json()
     assert sol["solicitante_email"] == NOVATO and sol["solicitante_nome"] == "Novato"
@@ -123,18 +109,7 @@ def test_os_dois_veem_recebem_avisos_e_podem_corrigir(cenario, db):
         entrar(cenario, quem)
         assert cenario.get(f"/api/solicitacoes/{sol['id']}").json()["acoes"] == ["reenviar"]
     entrar(cenario, BENEF)
-    r = cenario.post(
-        f"/api/solicitacoes/{sol['id']}/reenviar",
-        data={
-            "data_despesa": HOJE.isoformat(),
-            "valor": "38,00",
-            "descricao": "Almoço na visita",
-            "motivo": "Visita técnica",
-            "local_refeicao": "outro",
-            "empresa_id": "1",
-            "gestor_email": GESTOR,
-        },
-    )
+    r = reenviar(cenario, sol, [nota_despesa("38,00", arquivo=None, id=sol["despesas"][0]["id"])])
     assert r.status_code == 200, r.text
     # a correção não muda quem recebe
     assert r.json()["solicitante_email"] == BENEF and r.json()["criado_por_email"] == COLAB
@@ -175,19 +150,17 @@ def test_viagem_e_adiantamento_em_nome_de_outra_pessoa(cenario):
     ontem = (HOJE - timedelta(days=1)).isoformat()
     r = cenario.post(
         "/api/solicitacoes/viagem",
-        data={
+        json={
             "destino": "Marabá - PA",
             "viagem_inicio": ontem,
             "viagem_fim": ontem,
             "descricao": "Visita",
-            "empresa_id": "1",
+            "empresa_id": 1,
+            "centro_custo_id": "1",
             "gestor_email": GESTOR,
             "beneficiario_email": BENEF,
-            "despesas": json.dumps(
-                [{"categoria": "taxi_uber", "data_despesa": ontem, "valor": "30", "arquivo": 0}]
-            ),
+            "linhas": [{"tipo": "integral", "quantidade": 1}],
         },
-        files=[("arquivos", ("t.jpg", JPG, "image/jpeg"))],
     )
     assert r.status_code == 201, r.text
     assert r.json()["solicitante_email"] == BENEF
@@ -200,6 +173,7 @@ def test_viagem_e_adiantamento_em_nome_de_outra_pessoa(cenario):
             "viagem_fim": ontem,
             "descricao": "Feira",
             "empresa_id": 1,
+            "valor": "135,00",
             "gestor_email": GESTOR,
             "beneficiario_email": BENEF,
         },

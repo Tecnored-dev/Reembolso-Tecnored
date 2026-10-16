@@ -41,6 +41,8 @@ export type Status =
   | 'pago'
   | 'devolvido'
   | 'cancelado'
+  // Recusa do gestor: final (Thais, 15/10)
+  | 'recusado'
   // Só do adiantamento de viagem (depois do pagamento das diárias)
   | 'aguardando_prestacao'
   | 'prestacao_em_conferencia'
@@ -55,6 +57,7 @@ export type Acao =
   | 'conferir'
   | 'devolver'
   | 'aprovar'
+  | 'recusar'
   | 'pagar'
   | 'reenviar'
   | 'prestar_contas'
@@ -72,7 +75,9 @@ export interface Perfil {
   email: string
   nome: string
   matricula: string | null
+  /** Último centro de custo usado num pedido: sugestão para o próximo */
   centro_custo: Opcao | null
+  /** Só a matrícula é obrigatória (Thais, 15/10) */
   completo: boolean
 }
 
@@ -85,17 +90,26 @@ export interface Cadastros {
   categorias_viagem: { id: CategoriaViagem; rotulo: string }[]
   /** Motivos da despesa (lista do ARGO) — alimentação e despesas diversas */
   motivos: string[]
-  /** Onde foi a refeição (só alimentação): define o limite do alerta */
-  locais_refeicao: { id: string; rotulo: string; limite: string }[]
-  /** Adiantamento: valor de uma diária e máximo de diárias por pedido */
+  /** Reembolso de despesas - alimentação: limite de refeição por dia (só alerta) */
+  limite_alimentacao_dia: string
+  /** Diária de viagem: valor da diária integral e máximo de diárias por linha */
   valor_diaria: string
   max_diarias: number
 }
 
+export interface LinhaDiaria {
+  id: number
+  tipo: 'integral' | 'parcial'
+  tipo_rotulo: string
+  quantidade: number
+  valor_unitario: string
+  subtotal: string
+}
+
 export type TipoSolicitacao = 'alimentacao' | 'viagem' | 'adiantamento' | 'diversas'
 
-/** Tipos com uma nota só, no formulário simples. */
-export type TipoUmaNota = 'alimentacao' | 'diversas'
+/** "Reembolso de despesas - Prestação de Contas": alimentação ou despesas diversas. */
+export type TipoDespesas = 'alimentacao' | 'diversas'
 
 /** Chave do tipo de despesa de viagem (a lista vem de GET /api/cadastros). */
 export type CategoriaViagem = string
@@ -152,18 +166,23 @@ export interface EventoHistorico {
 /** GET /api/solicitacoes/:id */
 export interface Solicitacao extends SolicitacaoResumo {
   matricula: string
-  centro_custo: string
+  /** Escolhido no pedido; o adiantamento não tem (nulo) */
+  centro_custo: string | null
   empresa: string
   gestor_email: string | null
   pula_gestor: boolean
   /** Alimentação e despesas diversas (nulo em pedidos antigos) */
   motivo: string | null
-  /** Só alimentação: pinda, maraba ou outro */
+  /** Pedidos antigos (antes de 15/10): pinda, maraba ou outro */
   local_refeicao: string | null
   local_refeicao_rotulo: string | null
   viagem_inicio: string | null
   viagem_fim: string | null
-  /** Só no adiantamento: o valor adiantado é `valor_total` */
+  /** Diária de viagem: "Viagem internacional?" (nulo nos pedidos antigos) */
+  viagem_internacional: boolean | null
+  /** Diária de viagem: linhas de valor integral/parcial (vazio nos pedidos antigos) */
+  linhas_diaria: LinhaDiaria[]
+  /** Adiantamento antigo (antes de 15/10): diárias contadas pelo sistema. O valor adiantado é `valor_total` */
   diarias: number | null
   /** Diária complementar (quem recebe auxílio refeição): o valor foi informado */
   diaria_complementar: boolean
@@ -190,6 +209,10 @@ export interface Solicitacao extends SolicitacaoResumo {
   data_pagamento: string | null
   motivo_devolucao: string | null
   devolvido_por: string | null
+  /** Recusa do gestor (final) */
+  recusado_por: string | null
+  recusado_em: string | null
+  motivo_recusa: string | null
   motivo_cancelamento: string | null
   despesas: Despesa[]
   historico: EventoHistorico[]

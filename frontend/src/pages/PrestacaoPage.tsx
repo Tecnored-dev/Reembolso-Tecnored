@@ -94,10 +94,15 @@ export default function PrestacaoPage() {
       <form className={ui.form} onSubmit={enviar}>
         <p className={ui.muted}>
           Anexe as notas de tudo o que você gastou na viagem. Adiantado:{' '}
-          <strong>{formatarMoeda(adiantado)}</strong> (
-          {`${sol.diarias} diária${sol.diarias === 1 ? '' : 's'}`}
-          {sol.valor_complementar !== null && ' + diária complementar'}
-          ).
+          <strong>{formatarMoeda(adiantado)}</strong>
+          {sol.diarias !== null && (
+            <>
+              {' '}
+              ({`${sol.diarias} diária${sol.diarias === 1 ? '' : 's'}`}
+              {sol.valor_complementar !== null && ' + diária complementar'})
+            </>
+          )}
+          .
           {sol.prazo_prestacao && <> Prazo: até {formatarData(sol.prazo_prestacao)}.</>}
         </p>
         {sol.prazo_prestacao && sol.prazo_prestacao < hojeISO() && !corrigindo && (

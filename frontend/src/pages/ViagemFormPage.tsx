@@ -6,19 +6,31 @@ import {
   camposBeneficiario,
   type BeneficiarioForm,
 } from '@/beneficiario'
+import { centroCustoInicial } from '@/centroCusto'
 import BeneficiarioCampos from '@/components/BeneficiarioCampos'
+import CentroCustoCampo from '@/components/CentroCustoCampo'
 import { useContexto } from '@/components/contexto'
-import NotasViagem from '@/components/NotasViagem'
+import {
+  linhasParaApi,
+  novaLinhaDiaria,
+  quantidadeDiarias,
+  subtotalLinha,
+  totalDiaria,
+  type LinhaDiariaForm,
+  type TipoLinhaDiaria,
+} from '@/diaria'
 import { useApi } from '@/hooks/useApi'
-import { anexarNotas, conferirNotas, novaNota, notasEnviadas, type NotaForm } from '@/notas'
 import { api } from '@/services/api'
 import ui from '@/styles/ui.module.css'
 import type { Cadastros, Gestor, Solicitacao } from '@/types'
-import { mensagemErro } from '@/utils'
+import { calcularDiarias, formatarMoeda, mensagemErro } from '@/utils'
 
-// Reembolso de viagem (o colaborador pagou e pede depois, com as notas), ou a
-// correção de um devolvido (/solicitacoes/:id/corrigir-viagem). Mesmo fluxo da
-// alimentação; a diferença é aceitar várias notas, cada uma com categoria.
+// Diária de Viagem (Thais, 15/10): destino, ida, volta, motivo, centro de custo
+// e linhas de "Valor Integral" (valor fixo da política) ou "Valor Parcial" (valor
+// informado), que podem se misturar. Sem notas e sem anexo; o total é calculado
+// na hora. Viagem internacional não tem diária. Também serve para corrigir um
+// pedido devolvido (/solicitacoes/:id/corrigir-viagem). Despesas com nota
+// (hotel, Uber, passagem) vão no Reembolso de despesas.
 export default function ViagemFormPage() {
   const { id } = useParams()
   const corrigindo = Boolean(id)
@@ -40,10 +52,12 @@ export default function ViagemFormPage() {
   const [destino, setDestino] = useState('')
   const [inicio, setInicio] = useState('')
   const [fim, setFim] = useState('')
+  const [internacional, setInternacional] = useState(false)
   const [descricao, setDescricao] = useState('')
   const [empresa, setEmpresa] = useState('')
+  const [centroCusto, setCentroCusto] = useState('')
   const [gestor, setGestor] = useState('')
-  const [notas, setNotas] = useState<NotaForm[]>(() => [novaNota()])
+  const [linhas, setLinhas] = useState<LinhaDiariaForm[]>(() => [novaLinhaDiaria()])
   const [erro, setErro] = useState<string | null>(null)
   const [enviando, setEnviando] = useState(false)
 
@@ -61,6 +75,12 @@ export default function ViagemFormPage() {
       setEmpresa(String(cadastros.empresas[0].id))
   }, [cadastros, corrigindo])
 
+  // Pedido novo: o centro de custo vem com o último usado (dá para trocar).
+  useEffect(() => {
+    if (!corrigindo && cadastros)
+      setCentroCusto((atual) => atual || centroCustoInicial(cadastros.centros_custo, perfil, null))
+  }, [cadastros, corrigindo, perfil])
+
   // Correção: carrega o que foi enviado para editar em cima.
   useEffect(() => {
     if (!id || !cadastros) return
@@ -72,39 +92,51 @@ export default function ViagemFormPage() {
       setFim(s.viagem_fim ?? '')
       setDescricao(s.descricao)
       setEmpresa(String(cadastros.empresas.find((e) => e.nome === s.empresa)?.id ?? ''))
+      setCentroCusto(centroCustoInicial(cadastros.centros_custo, perfil, s))
       setGestor(s.gestor_email ?? '')
-      setNotas(notasEnviadas(s.despesas))
+      if (s.linhas_diaria.length > 0)
+        setLinhas(
+          s.linhas_diaria.map((l) => ({
+            tipo: l.tipo,
+            quantidade: String(l.quantidade),
+            valor: l.tipo === 'parcial' ? Number(l.valor_unitario).toFixed(2).replace('.', ',') : '',
+          }))
+        )
     })
-  }, [id, cadastros])
+  }, [id, cadastros, perfil])
+
+  const valorDiaria = Number(cadastros?.valor_diaria ?? 0)
+  const maxDiarias = cadastros?.max_diarias ?? 60
+  const limite = Number(cadastros?.limite_solicitacao ?? 0)
+  const total = totalDiaria(linhas, valorDiaria)
+  const dias = calcularDiarias(inicio, fim)
+  const quantidade = quantidadeDiarias(linhas)
+  // Pedido antigo (com notas): não dá para corrigir, só abrir um novo.
+  const antigo = corrigindo && original !== null && original.despesas.length > 0
+
+  function mudarLinha(n: number, mudanca: Partial<LinhaDiariaForm>) {
+    setLinhas((atuais) => atuais.map((l, i) => (i === n ? { ...l, ...mudanca } : l)))
+  }
 
   async function enviar(e: FormEvent) {
     e.preventDefault()
     setErro(null)
-    const problema = conferirNotas(notas)
-    if (problema) {
-      setErro(problema)
-      return
+    const corpo = {
+      destino,
+      viagem_inicio: inicio,
+      viagem_fim: fim,
+      descricao,
+      empresa_id: Number(empresa),
+      centro_custo_id: centroCusto,
+      internacional,
+      linhas: linhasParaApi(linhas),
+      ...(pulaGestor ? {} : { gestor_email: gestor }),
+      ...(corrigindo ? {} : camposBeneficiario(benef)),
     }
-
-    const form = new FormData()
-    anexarNotas(form, notas)
-    form.append('destino', destino)
-    form.append('viagem_inicio', inicio)
-    form.append('viagem_fim', fim)
-    form.append('descricao', descricao)
-    form.append('empresa_id', empresa)
-    if (!pulaGestor) form.append('gestor_email', gestor)
-    if (!corrigindo)
-      for (const [campo, conteudo] of Object.entries(camposBeneficiario(benef)))
-        form.append(campo, conteudo)
-
     setEnviando(true)
     try {
       const url = corrigindo ? `/api/solicitacoes/${id}/reenviar-viagem` : '/api/solicitacoes/viagem'
-      // multipart explícito: sem isso o axios converteria o FormData em JSON.
-      const res = await api.post<Solicitacao>(url, form, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      })
+      const res = await api.post<Solicitacao>(url, corpo)
       navigate(`/solicitacoes/${res.data.id}`, { replace: true, state: { enviado: true } })
     } catch (err) {
       setErro(mensagemErro(err))
@@ -123,17 +155,36 @@ export default function ViagemFormPage() {
     )
   }
 
+  if (antigo) {
+    return (
+      <section className={ui.card}>
+        <div className={ui.aviso}>
+          Este pedido é do modelo antigo de viagem (com notas) e não pode ser corrigido aqui. Abra
+          uma nova Diária de Viagem; as despesas com nota vão no Reembolso de despesas.
+        </div>
+        <div className={ui.botoes}>
+          <Link to="/nova/viagem" className={ui.botao}>
+            Nova diária de viagem
+          </Link>
+          <Link to={`/solicitacoes/${id}`} className={`${ui.botao} ${ui.secundario}`}>
+            Voltar
+          </Link>
+        </div>
+      </section>
+    )
+  }
+
   return (
     <section className={ui.card}>
       <div className={ui.cabecalho}>
         <div>
           <h1 className={ui.titulo}>
-            {corrigindo ? `Corrigir ${original?.codigo ?? ''}` : 'Novo reembolso de viagem'}
+            {corrigindo ? `Corrigir ${original?.codigo ?? ''}` : 'Diária de Viagem'}
           </h1>
           <p className={ui.muted}>
             {benef.ativo && benef.email.trim()
               ? `Em nome de ${benef.conhecido?.nome ?? (benef.nome || benef.email.trim())}`
-              : `${perfil.matricula} · ${perfil.centro_custo?.rotulo ?? ''}`}
+              : `Matrícula ${perfil.matricula}`}
           </p>
         </div>
       </div>
@@ -145,7 +196,6 @@ export default function ViagemFormPage() {
       )}
 
       <form className={ui.form} onSubmit={enviar}>
-        <h2 className={ui.subtitulo}>Viagem</h2>
         <div className={ui.campo}>
           <label htmlFor="destino">Destino</label>
           <input
@@ -159,11 +209,11 @@ export default function ViagemFormPage() {
         </div>
         <div className={ui.grade}>
           <div className={ui.campo}>
-            <label htmlFor="inicio">Início da viagem</label>
+            <label htmlFor="inicio">Ida</label>
             <input id="inicio" type="date" value={inicio} onChange={(e) => setInicio(e.target.value)} required />
           </div>
           <div className={ui.campo}>
-            <label htmlFor="fim">Fim da viagem</label>
+            <label htmlFor="fim">Volta</label>
             <input
               id="fim"
               type="date"
@@ -174,6 +224,35 @@ export default function ViagemFormPage() {
             />
           </div>
         </div>
+
+        <fieldset className={ui.campo} style={{ border: 'none', padding: 0 }}>
+          <legend style={{ fontWeight: 600, marginBottom: 6 }}>Viagem internacional?</legend>
+          <label style={{ fontWeight: 400 }}>
+            <input
+              type="radio"
+              name="internacional"
+              checked={!internacional}
+              onChange={() => setInternacional(false)}
+            />{' '}
+            Não
+          </label>
+          <label style={{ fontWeight: 400 }}>
+            <input
+              type="radio"
+              name="internacional"
+              checked={internacional}
+              onChange={() => setInternacional(true)}
+            />{' '}
+            Sim
+          </label>
+        </fieldset>
+        {internacional && (
+          <div className={ui.aviso}>
+            Viagem internacional não tem diária. Se precisar de um valor antes de viajar, peça um
+            Adiantamento; as despesas com nota vão no Reembolso de despesas.
+          </div>
+        )}
+
         <div className={ui.campo}>
           <label htmlFor="descricao">Motivo da viagem</label>
           <textarea
@@ -187,13 +266,94 @@ export default function ViagemFormPage() {
           <span className={ui.ajuda}>{descricao.length}/500</span>
         </div>
 
-        {!corrigindo && (
-          <BeneficiarioCampos
-            valor={benef}
-            onChange={setBenef}
-            centros={cadastros?.centros_custo ?? []}
-          />
+        <h2 className={ui.subtitulo}>Diárias</h2>
+        {linhas.map((linha, n) => (
+          <div key={n} className={ui.grade} data-testid="linha-diaria">
+            <div className={ui.campo}>
+              <label htmlFor={`tipo-${n}`}>Categoria</label>
+              <select
+                id={`tipo-${n}`}
+                value={linha.tipo}
+                onChange={(e) => mudarLinha(n, { tipo: e.target.value as TipoLinhaDiaria })}
+              >
+                <option value="integral">Valor Integral ({formatarMoeda(valorDiaria)})</option>
+                <option value="parcial">Valor Parcial</option>
+              </select>
+            </div>
+            <div className={ui.campo}>
+              <label htmlFor={`qtd-${n}`}>Quantidade de diárias</label>
+              <input
+                id={`qtd-${n}`}
+                type="number"
+                min={1}
+                max={maxDiarias}
+                step={1}
+                value={linha.quantidade}
+                onChange={(e) => mudarLinha(n, { quantidade: e.target.value })}
+                required
+              />
+            </div>
+            {linha.tipo === 'parcial' && (
+              <div className={ui.campo}>
+                <label htmlFor={`valor-${n}`}>Valor da diária (R$)</label>
+                <input
+                  id={`valor-${n}`}
+                  inputMode="decimal"
+                  placeholder="0,00"
+                  value={linha.valor}
+                  onChange={(e) => mudarLinha(n, { valor: e.target.value })}
+                  required
+                />
+              </div>
+            )}
+            <div className={ui.campo}>
+              <span style={{ fontWeight: 600 }}>Subtotal</span>
+              <span>{formatarMoeda(subtotalLinha(linha, valorDiaria))}</span>
+              {linhas.length > 1 && (
+                <button
+                  type="button"
+                  className={`${ui.botao} ${ui.secundario}`}
+                  onClick={() => setLinhas((atuais) => atuais.filter((_, i) => i !== n))}
+                >
+                  Remover
+                </button>
+              )}
+            </div>
+          </div>
+        ))}
+        <div>
+          <button
+            type="button"
+            className={`${ui.botao} ${ui.secundario}`}
+            onClick={() => setLinhas((atuais) => [...atuais, novaLinhaDiaria()])}
+          >
+            + Adicionar linha
+          </button>
+        </div>
+
+        <div className={ui.info} aria-live="polite">
+          <strong>Total: {formatarMoeda(total)}</strong>
+        </div>
+        {dias > 0 && quantidade > dias && (
+          <div className={ui.aviso}>
+            A quantidade de diárias ({quantidade}) é maior que os dias da viagem ({dias}). Você pode
+            enviar mesmo assim — o financeiro vai ver o alerta.
+          </div>
         )}
+        {limite > 0 && total > limite && (
+          <div className={ui.aviso}>
+            Total acima do limite por solicitação ({formatarMoeda(limite)}). Você pode enviar mesmo
+            assim — o gestor e o financeiro vão ver o alerta.
+          </div>
+        )}
+
+        {!corrigindo && <BeneficiarioCampos valor={benef} onChange={setBenef} />}
+
+        <CentroCustoCampo
+          centros={cadastros?.centros_custo ?? []}
+          valor={centroCusto}
+          onChange={setCentroCusto}
+        />
 
         <div className={ui.grade}>
           <div className={ui.campo}>
@@ -235,13 +395,10 @@ export default function ViagemFormPage() {
           </p>
         )}
 
-        <h2 className={ui.subtitulo}>Notas</h2>
-        <NotasViagem notas={notas} setNotas={setNotas} cadastros={cadastros} />
-
         {erro && <div className={ui.erro}>{erro}</div>}
 
         <div className={ui.botoes}>
-          <button className={ui.botao} disabled={enviando}>
+          <button className={ui.botao} disabled={enviando || internacional}>
             {enviando ? 'Enviando…' : corrigindo ? 'Reenviar para conferência' : 'Enviar'}
           </button>
           <Link to={corrigindo ? `/solicitacoes/${id}` : '/inicio'} className={`${ui.botao} ${ui.secundario}`}>

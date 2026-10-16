@@ -14,7 +14,8 @@ const ACAO_HISTORICO: Record<string, string> = {
   conferido: 'Conferiu',
   aprovado: 'Aprovou',
   devolvido: 'Devolveu para correção',
-  pago: 'Registrou o pagamento',
+  recusado: 'Recusou (pedido finalizado)',
+  pago: 'Salvou a data do pagamento',
   cancelado: 'Cancelou',
   prestacao_enviada: 'Enviou a prestação de contas',
   prestacao_reenviada: 'Corrigiu e reenviou a prestação de contas',
@@ -57,7 +58,9 @@ function etapasAdiantamento(s: Solicitacao): Etapa[] {
     { rotulo: 'Acerto', idx: 4 },
     { rotulo: 'Encerrada', idx: 5 },
   ]
-  const posicao = POSICAO_ADIANTAMENTO[s.status] ?? 0
+  // Recusado pelo gestor: parou no gestor (no pedido ou na diferença).
+  const posicao =
+    s.status === 'recusado' ? (s.valor_gasto !== null ? 4 : 0) : (POSICAO_ADIANTAMENTO[s.status] ?? 0)
   const fim = s.status === 'encerrado'
   return lista.map((e) => ({
     rotulo: e.rotulo,
@@ -77,8 +80,14 @@ function etapas(s: Solicitacao): Etapa[] {
     { chave: 'aguardando_pagamento', rotulo: 'Pagamento' },
     { chave: 'pago', rotulo: 'Paga' },
   ]
-  // Devolvida volta para a conferência; cancelada para onde parou.
-  const efetivo = s.status === 'devolvido' || s.status === 'cancelado' ? 'em_conferencia' : s.status
+  // Devolvida volta para a conferência; cancelada para onde parou; recusada
+  // parou no gestor.
+  const efetivo =
+    s.status === 'devolvido' || s.status === 'cancelado'
+      ? 'em_conferencia'
+      : s.status === 'recusado'
+        ? 'aguardando_gestor'
+        : s.status
   const posicao = ordem.indexOf(efetivo as Status)
   return lista.map((e) => {
     const idx = e.chave === 'enviada' ? -1 : ordem.indexOf(e.chave as Status)
@@ -123,11 +132,13 @@ export default function DetalhePage() {
   useEffect(carregar, [carregar])
 
   // A nota vem da API com o cookie de sessão; vira um blob local para exibir.
-  // Alimentação tem uma nota e ela abre direto; em viagem e na prestação de
-  // contas do adiantamento, a pessoa escolhe qual ver.
+  // Com uma nota só, ela abre direto; com várias (viagem, prestação de contas
+  // do adiantamento e reembolso de despesas), a pessoa escolhe qual ver.
   const viagem = sol?.tipo === 'viagem'
   const adiantamento = sol?.tipo === 'adiantamento'
-  const variasNotas = viagem || adiantamento
+  const comViagem = viagem || adiantamento
+  // Reembolso de despesas pode ter várias notas (Thais, 15/10); com uma só, ela abre direto.
+  const variasNotas = comViagem || (sol?.despesas.length ?? 0) > 1
   const [notaAberta, setNotaAberta] = useState<number | null>(null)
   const despesa = variasNotas
     ? sol?.despesas.find((d) => d.id === notaAberta)
@@ -215,22 +226,27 @@ export default function DetalhePage() {
         titulo: 'Aprovar a diferença',
         texto: `${sol.solicitante_nome} gastou ${formatarMoeda(
           -(saldo ?? 0)
-        )} a mais que o adiantado. O financeiro já conferiu as notas. Aprove a diferença ou devolva para correção.`,
+        )} a mais que o adiantado. O financeiro já conferiu as notas. Aprove a diferença ou recuse: recusar encerra o adiantamento sem pagar a diferença.`,
         ok: 'Aprovar a diferença',
       }
     if (adiantamento)
       return {
         titulo: 'Sua aprovação',
-        texto: `Adiantamento de ${sol.diarias} diária(s)${
-          sol.valor_complementar !== null
-            ? ` + diária complementar de ${formatarMoeda(sol.valor_complementar)} (quem recebe auxílio refeição)`
-            : ''
-        } para ${sol.destino}, pago antes da viagem. Depois, o colaborador presta contas com as notas.`,
+        texto: `Adiantamento de ${
+          sol.diarias === null
+            ? formatarMoeda(sol.valor_total)
+            : `${sol.diarias} diária(s)${
+                sol.valor_complementar !== null
+                  ? ` + diária complementar de ${formatarMoeda(sol.valor_complementar)} (quem recebe auxílio refeição)`
+                  : ''
+              }`
+        } para ${sol.destino}, pago antes da viagem. Depois, o colaborador presta contas com as notas. Recusar encerra o pedido.`,
         ok: 'Aprovar',
       }
     return {
       titulo: 'Sua aprovação',
-      texto: 'O financeiro já conferiu a nota. Aprove ou devolva para correção.',
+      texto:
+        'O financeiro já conferiu a nota. Aprove ou recuse. Recusar encerra o pedido: para tentar de novo, o colaborador abre outro.',
       ok: 'Aprovar',
     }
   })()
@@ -341,6 +357,12 @@ export default function DetalhePage() {
             Cancelada: {sol.motivo_cancelamento}
           </div>
         )}
+        {sol.status === 'recusado' && (
+          <div className={ui.erro} style={{ marginTop: 16 }}>
+            <strong>Recusado pelo gestor {sol.recusado_por}:</strong> {sol.motivo_recusa}
+            <div>Este pedido foi finalizado. Para tentar de novo, abra um pedido novo.</div>
+          </div>
+        )}
         {sol.alerta_limite && (
           <div className={ui.aviso} style={{ marginTop: 12 }}>
             ⚠️ {sol.alerta_limite}
@@ -355,7 +377,9 @@ export default function DetalhePage() {
             {textoDecisao.texto}
           </p>
           <div className={ui.campo}>
-            <label htmlFor="comentario">Comentário (obrigatório para devolver)</label>
+            <label htmlFor="comentario">
+              Comentário (obrigatório para {decisao === 'aprovar' ? 'recusar' : 'devolver'})
+            </label>
             <textarea
               id="comentario"
               value={comentario}
@@ -377,7 +401,7 @@ export default function DetalhePage() {
               disabled={processando || !comentario.trim()}
               onClick={() => agir(decisao, { aprovar: false, comentario })}
             >
-              Devolver para correção
+              {decisao === 'aprovar' ? 'Recusar' : 'Devolver para correção'}
             </button>
           </div>
         </section>
@@ -398,6 +422,11 @@ export default function DetalhePage() {
               Sem nota por enquanto: a conferência é na prestação de contas, depois da viagem.
             </p>
           )}
+          <p className={ui.muted} style={{ marginBottom: 12 }}>
+            {adiantamento && sol.status === 'aguardando_pagamento'
+              ? 'Ao salvar a data, o adiantamento fica pago e o colaborador passa a prestar contas.'
+              : 'Ao salvar a data, o pedido é finalizado como pago.'}
+          </p>
           <div className={ui.botoes}>
             <div className={ui.campo}>
               <label htmlFor="dataPagamento">Data do pagamento</label>
@@ -414,11 +443,7 @@ export default function DetalhePage() {
               disabled={processando || !dataPagamento}
               onClick={() => agir('pagar', { data_pagamento: dataPagamento })}
             >
-              {sol.status === 'diferenca_aguardando_pagamento'
-                ? 'Marcar diferença como paga'
-                : adiantamento
-                  ? 'Marcar adiantamento como pago'
-                  : 'Marcar como paga'}
+              Salvar data de pagamento
             </button>
           </div>
           {erroAcao && <div className={ui.erro} style={{ marginTop: 12 }}>{erroAcao}</div>}
@@ -529,10 +554,12 @@ export default function DetalhePage() {
               <dt>Matrícula</dt>
               <dd>{sol.matricula}</dd>
             </div>
-            <div>
-              <dt>Centro de custo</dt>
-              <dd>{sol.centro_custo}</dd>
-            </div>
+            {sol.centro_custo && (
+              <div>
+                <dt>Centro de custo</dt>
+                <dd>{sol.centro_custo}</dd>
+              </div>
+            )}
             <div>
               <dt>Empresa de débito</dt>
               <dd>{sol.empresa}</dd>
@@ -541,7 +568,7 @@ export default function DetalhePage() {
               <dt>Gestor</dt>
               <dd>{sol.pula_gestor ? 'Não se aplica (solicitante é gestor)' : sol.gestor_nome}</dd>
             </div>
-            {variasNotas ? (
+            {comViagem ? (
               <>
                 <div>
                   <dt>Destino</dt>
@@ -553,7 +580,13 @@ export default function DetalhePage() {
                     {formatarData(sol.viagem_inicio)} a {formatarData(sol.viagem_fim)}
                   </dd>
                 </div>
-                {adiantamento && (
+                {adiantamento && sol.diarias === null && (
+                  <div>
+                    <dt>Valor do adiantamento</dt>
+                    <dd>{formatarMoeda(sol.valor_total)}</dd>
+                  </div>
+                )}
+                {adiantamento && sol.diarias !== null && (
                   <div>
                     <dt>Diárias</dt>
                     <dd>
@@ -563,6 +596,12 @@ export default function DetalhePage() {
                       )}{' '}
                       = {formatarMoeda(sol.valor_total)}
                     </dd>
+                  </div>
+                )}
+                {viagem && sol.linhas_diaria.length > 0 && (
+                  <div>
+                    <dt>Viagem internacional?</dt>
+                    <dd>{sol.viagem_internacional ? 'Sim' : 'Não'}</dd>
                   </div>
                 )}
                 {adiantamento && sol.valor_gasto !== null && (
@@ -580,10 +619,18 @@ export default function DetalhePage() {
               </>
             ) : (
               <>
-                <div>
-                  <dt>Data da despesa</dt>
-                  <dd>{formatarData(sol.despesas[0]?.data_despesa ?? null)}</dd>
-                </div>
+                {sol.despesas.length === 1 && (
+                  <div>
+                    <dt>Data da despesa</dt>
+                    <dd>{formatarData(sol.despesas[0].data_despesa)}</dd>
+                  </div>
+                )}
+                {sol.despesas.length === 1 && sol.tipo === 'alimentacao' && (
+                  <div>
+                    <dt>Categoria</dt>
+                    <dd>{sol.despesas[0].categoria_rotulo}</dd>
+                  </div>
+                )}
                 {sol.motivo && (
                   <div>
                     <dt>Motivo</dt>
@@ -611,7 +658,7 @@ export default function DetalhePage() {
               </div>
             )}
             <div style={{ gridColumn: '1 / -1' }}>
-              <dt>{variasNotas ? 'Motivo da viagem' : 'Descrição'}</dt>
+              <dt>{comViagem ? 'Motivo da viagem' : 'Descrição'}</dt>
               <dd>{sol.descricao}</dd>
             </div>
           </dl>
@@ -643,6 +690,40 @@ export default function DetalhePage() {
           </section>
         )}
       </div>
+
+      {sol.linhas_diaria.length > 0 && (
+        <section className={ui.card}>
+          <h2 className={ui.subtitulo}>Diárias</h2>
+          <div style={{ overflowX: 'auto' }}>
+            <table className={ui.tabela}>
+              <thead>
+                <tr>
+                  <th>Categoria</th>
+                  <th className={ui.direita}>Quantidade</th>
+                  <th className={ui.direita}>Valor da diária</th>
+                  <th className={ui.direita}>Subtotal</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sol.linhas_diaria.map((l) => (
+                  <tr key={l.id}>
+                    <td>{l.tipo_rotulo}</td>
+                    <td className={ui.direita}>{l.quantidade}</td>
+                    <td className={ui.direita}>{formatarMoeda(l.valor_unitario, sol.moeda)}</td>
+                    <td className={ui.direita}>{formatarMoeda(l.subtotal, sol.moeda)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr>
+                  <th colSpan={3}>Total</th>
+                  <th className={ui.direita}>{formatarMoeda(sol.valor_total, sol.moeda)}</th>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </section>
+      )}
 
       {variasNotas && sol.despesas.length > 0 && (
         <section className={ui.card}>

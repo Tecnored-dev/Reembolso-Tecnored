@@ -62,7 +62,9 @@ class Usuario(Base):
 
     @property
     def perfil_completo(self) -> bool:
-        return bool(self.matricula and self.centro_custo_id)
+        # Só a matrícula (Thais, 15/10). O centro de custo agora é escolhido em
+        # cada pedido; `centro_custo_id` guarda o último usado, para sugerir.
+        return bool(self.matricula)
 
 
 class GestorGrupo(Base):
