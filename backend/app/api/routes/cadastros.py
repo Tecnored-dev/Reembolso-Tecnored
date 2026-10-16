@@ -123,7 +123,7 @@ def listar_gestores(
     """Gestores para escolher — sem o próprio usuário (ninguém aprova a si mesmo)."""
     return [
         {"email": g.email, "nome": g.nome}
-        for g in gestores.listar(db, settings)
+        for g in gestores.listar_para(db, settings, usuario.email)
         if g.email != usuario.email
     ]
 

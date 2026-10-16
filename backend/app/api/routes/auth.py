@@ -23,6 +23,7 @@ from app.auth.papeis import PAPEIS_ESPECIAIS, resolver_papeis
 from app.config import Settings, get_settings
 from app.db import get_db
 from app.services import gestores
+from app.services.painel_teste import COOKIE_ADMIN
 
 router = APIRouter(tags=["auth"])
 
@@ -134,6 +135,9 @@ def logout(
     settings: Settings = Depends(get_settings),
 ):
     via = sessoes.encerrar_sessao(db, request.cookies.get(sessoes.COOKIE))
+    # Saiu durante o "ver como" do painel de teste: encerra também a sessão do admin
+    # guardada e apaga o cookie, para ninguém herdar o poder de admin.
+    sessoes.encerrar_sessao(db, request.cookies.get(COOKIE_ADMIN))
     destino = (
         f"https://{settings.cf_access_team_domain}/cdn-cgi/access/logout"
         if via == "cloudflare" and settings.cf_access_team_domain
@@ -141,6 +145,7 @@ def logout(
     )
     response = RedirectResponse(destino, status_code=302)
     response.delete_cookie(sessoes.COOKIE)
+    response.delete_cookie(COOKIE_ADMIN)
     return response
 
 

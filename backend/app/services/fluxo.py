@@ -85,6 +85,7 @@ from app.models.solicitacao import Despesa, Historico, LinhaDiaria, Solicitacao
 from app.services import arquivos, gestores, notificacoes
 from app.services.erros import NaoEncontrado, RegraNegocio, SemPermissao
 from app.services.formatos import moeda
+from app.services.isolamento import DOMINIO_TESTE, eh_teste
 from app.storage import Armazenamento
 
 log = logging.getLogger(__name__)
@@ -322,6 +323,10 @@ def listar(db: Session, usuario: Usuario, escopo: str) -> list[Solicitacao]:
             )
     else:
         raise RegraNegocio(f"Escopo inválido: {escopo}")
+    if escopo in ("conferencia", "pagamento", "todas"):
+        # Filas gerais: usuário de teste só vê pedido de teste, e o real só o real.
+        de_teste = Solicitacao.solicitante_email.like(f"%{DOMINIO_TESTE}")
+        consulta = consulta.where(de_teste if eh_teste(usuario.email) else ~de_teste)
     return list(db.scalars(consulta).all())
 
 
@@ -1747,7 +1752,8 @@ def _validar_gestor(
     if criado_por_email and escolhido == criado_por_email:
         raise RegraNegocio("Quem criou o pedido não pode ser o aprovador.")
     gestor = gestores.buscar(db, settings, email)
-    if gestor is None:
+    # Pedido de teste só vai para gestor de teste, e o real só para gestor real.
+    if gestor is None or eh_teste(gestor.email) != eh_teste(pessoa_email):
         raise RegraNegocio("Gestor não encontrado na lista de gestores.")
     return gestor
 

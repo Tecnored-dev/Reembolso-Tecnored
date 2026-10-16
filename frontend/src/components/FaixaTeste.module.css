@@ -1,0 +1,29 @@
+.faixa {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 8px 16px;
+  background: #92400e;
+  color: white;
+  font-size: 0.88rem;
+}
+
+.voltar {
+  font: inherit;
+  font-weight: 600;
+  padding: 3px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  background: transparent;
+  color: white;
+  cursor: pointer;
+}
+
+.voltar:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.18);
+}

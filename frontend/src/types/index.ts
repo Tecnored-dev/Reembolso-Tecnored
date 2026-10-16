@@ -226,3 +226,19 @@ export interface UsuarioBusca {
   perfil_completo: boolean
   eh_gestor: boolean
 }
+
+/** Painel de teste ("Ver como") — GET /api/teste/estado. Só existe em local/hml. */
+export interface UsuarioTeste {
+  chave: string
+  email: string
+  nome: string
+  papeis: Papel[]
+  descricao: string
+}
+
+export interface TesteEstado {
+  ativo: boolean
+  admin: boolean
+  vendo_como: { email: string; nome: string; papeis: Papel[] } | null
+  usuarios: UsuarioTeste[]
+}

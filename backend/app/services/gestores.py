@@ -30,6 +30,7 @@ from sqlalchemy.orm import Session
 from app.auth.papeis import GESTOR
 from app.config import Settings
 from app.models.cadastros import GestorGrupo, Usuario
+from app.services.isolamento import eh_teste
 
 log = logging.getLogger(__name__)
 
@@ -139,6 +140,25 @@ def listar(db: Session, settings: Settings) -> list[Gestor]:
     return sorted(unicos.values(), key=lambda g: g.nome.lower())
 
 
+def _de_teste(settings: Settings) -> list[Gestor]:
+    """Gestores do painel de teste (só quando ele está ligado)."""
+    if not settings.painel_teste_enabled:
+        return []
+    from app.services.painel_teste import USUARIOS_TESTE
+
+    return [Gestor(u.email, u.nome) for u in USUARIOS_TESTE if GESTOR in u.papeis]
+
+
+def listar_para(db: Session, settings: Settings, email_usuario: str) -> list[Gestor]:
+    """Quem pode ser escolhido por esse usuário: de teste só vê gestores de teste,
+    e o usuário real nunca vê gestor de teste (pedidos de teste e reais não se misturam)."""
+    if eh_teste(email_usuario):
+        return sorted(_de_teste(settings), key=lambda g: g.nome.lower())
+    return [g for g in listar(db, settings) if not eh_teste(g.email)]
+
+
 def buscar(db: Session, settings: Settings, email: str) -> Gestor | None:
     email = email.strip().lower()
-    return next((g for g in listar(db, settings) if g.email == email), None)
+    return next(
+        (g for g in [*listar(db, settings), *_de_teste(settings)] if g.email == email), None
+    )

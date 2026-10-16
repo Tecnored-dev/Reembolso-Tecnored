@@ -7,6 +7,7 @@ import ListaPage from '@/pages/ListaPage'
 import NotFoundPage from '@/pages/NotFoundPage'
 import PerfilPage from '@/pages/PerfilPage'
 import PrestacaoPage from '@/pages/PrestacaoPage'
+import TestePage from '@/pages/TestePage'
 import ViagemFormPage from '@/pages/ViagemFormPage'
 import WelcomePage from '@/pages/WelcomePage'
 
@@ -85,6 +86,7 @@ function App() {
         <Route path="/solicitacoes/:id/corrigir-adiantamento" element={<AdiantamentoFormPage />} />
         <Route path="/solicitacoes/:id/prestar-contas" element={<PrestacaoPage />} />
         <Route path="/perfil" element={<PerfilPage />} />
+        <Route path="/teste" element={<TestePage />} />
       </Route>
       <Route path="*" element={<NotFoundPage />} />
     </Routes>

@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import type { Contexto } from '@/components/contexto'
+import FaixaTeste from '@/components/FaixaTeste'
 import Icone from '@/components/Icone'
 import { api, LOGOUT_URL } from '@/services/api'
-import type { AppConfig, Perfil, Session, SolicitacaoResumo } from '@/types'
+import type { AppConfig, Perfil, Session, SolicitacaoResumo, TesteEstado } from '@/types'
 import { formatVersion } from '@/utils'
 import styles from './Layout.module.css'
 
@@ -25,6 +26,7 @@ export default function Layout() {
   const [session, setSession] = useState<Session | null>(null)
   const [perfil, setPerfil] = useState<Perfil | null>(null)
   const [contadores, setContadores] = useState<Record<string, number>>({})
+  const [teste, setTeste] = useState<TesteEstado | null>(null)
   const navigate = useNavigate()
   const { pathname } = useLocation()
 
@@ -39,6 +41,10 @@ export default function Layout() {
       .get<Session>('/api/session')
       .then((res) => {
         setSession(res.data)
+        api
+          .get<TesteEstado>('/api/teste/estado')
+          .then((r) => setTeste(r.data))
+          .catch(() => setTeste(null)) // painel de teste é opcional
         return recarregarPerfil()
       })
       .catch(() => navigate('/', { replace: true })) // 401 — sem sessão
@@ -70,12 +76,14 @@ export default function Layout() {
     { para: '/aprovacoes', rotulo: 'Aprovações', mostrar: tem('gestor'), fila: 'aprovacao' },
     { para: '/pagamentos', rotulo: 'Pagamentos', mostrar: tem('financeiro'), fila: 'pagamento' },
     { para: '/todas', rotulo: 'Todas', mostrar: tem('financeiro') || tem('admin') },
+    { para: '/teste', rotulo: 'Painel de teste', mostrar: Boolean(teste?.ativo && teste.admin) },
   ].filter((item) => item.mostrar)
 
   const contexto: Contexto = { session, config, perfil, recarregarPerfil, tem }
 
   return (
     <div className={styles.page}>
+      {teste && <FaixaTeste estado={teste} />}
       <header className={styles.header} style={{ background: config.bg_color }}>
         <div className={styles.marca}>
           <img src="/tecnored-logo-branca.png" alt="Tecnored" className={styles.logo} />

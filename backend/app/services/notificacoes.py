@@ -15,6 +15,7 @@ from app.config import Settings
 from app.models.cadastros import Usuario
 from app.models.solicitacao import Notificacao, Solicitacao
 from app.services.formatos import moeda
+from app.services.isolamento import eh_teste
 
 
 def emails_financeiro(db: Session) -> list[str]:
@@ -31,6 +32,8 @@ def enfileirar(
     texto: str,
 ) -> None:
     destinatarios = sorted({e.strip().lower() for e in para if e and e.strip()})
+    # Pedido de teste só avisa gente de teste, e o real nunca avisa gente de teste.
+    destinatarios = [d for d in destinatarios if eh_teste(d) == eh_teste(sol.solicitante_email)]
     if not destinatarios:
         return
     link = f"{settings.frontend_url}/solicitacoes/{sol.id}"
