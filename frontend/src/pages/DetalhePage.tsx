@@ -33,6 +33,8 @@ interface Etapa {
   rotulo: string
   feita: boolean
   atual: boolean
+  /** Pedido recusado pelo gestor: a etapa onde parou aparece com um x. */
+  recusada?: boolean
 }
 
 // Adiantamento: pedido → gestor → pagamento → prestação → conferência → acerto → fim.
@@ -73,6 +75,12 @@ function etapasAdiantamento(s: Solicitacao): Etapa[] {
 
 // Etapas mostradas no topo — o "status do reembolso" que evita cobrar a Thais.
 function etapas(s: Solicitacao): Etapa[] {
+  const lista = etapasBase(s)
+  if (s.status !== 'recusado') return lista
+  return lista.map((e) => (e.atual ? { ...e, atual: false, recusada: true } : e))
+}
+
+function etapasBase(s: Solicitacao): Etapa[] {
   if (s.tipo === 'adiantamento') return etapasAdiantamento(s)
   const ordem: Status[] = ['em_conferencia', 'aguardando_gestor', 'aguardando_pagamento', 'pago']
   const lista = [
@@ -288,11 +296,19 @@ export default function DetalhePage() {
             {etapas(sol).map((e, i) => (
               <li
                 key={e.rotulo}
-                className={e.feita ? styles.feita : e.atual ? styles.atual : undefined}
+                className={
+                  e.feita ? styles.feita : e.atual ? styles.atual : e.recusada ? styles.recusada : undefined
+                }
                 aria-current={e.atual ? 'step' : undefined}
               >
                 <span className={styles.marco} aria-hidden="true">
-                  {e.feita ? <Icone nome="check" tamanho={16} /> : i + 1}
+                  {e.feita ? (
+                    <Icone nome="check" tamanho={16} />
+                  ) : e.recusada ? (
+                    <Icone nome="x" tamanho={16} />
+                  ) : (
+                    i + 1
+                  )}
                 </span>
                 {e.rotulo}
               </li>

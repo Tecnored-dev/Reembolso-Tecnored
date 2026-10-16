@@ -100,6 +100,21 @@
   box-shadow: 0 0 0 4px var(--color-tecnored-bg-soft);
 }
 
+.etapas li.recusada {
+  color: var(--color-danger);
+  font-weight: 700;
+}
+
+.etapas li.recusada::before {
+  background: var(--color-tecnored-accent);
+}
+
+.etapas li.recusada .marco {
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+  box-shadow: 0 0 0 4px var(--color-danger-bg);
+}
+
 /* Bloco "agora": com quem está o pedido e o que acontece. */
 .agora {
   margin-top: var(--space-4);
