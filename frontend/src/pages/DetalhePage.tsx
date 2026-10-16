@@ -232,10 +232,14 @@ export default function DetalhePage() {
     if (adiantamento)
       return {
         titulo: 'Sua aprovação',
-        texto: `Adiantamento de ${sol.diarias} diária(s)${
-          sol.valor_complementar !== null
-            ? ` + diária complementar de ${formatarMoeda(sol.valor_complementar)} (quem recebe auxílio refeição)`
-            : ''
+        texto: `Adiantamento de ${
+          sol.diarias === null
+            ? formatarMoeda(sol.valor_total)
+            : `${sol.diarias} diária(s)${
+                sol.valor_complementar !== null
+                  ? ` + diária complementar de ${formatarMoeda(sol.valor_complementar)} (quem recebe auxílio refeição)`
+                  : ''
+              }`
         } para ${sol.destino}, pago antes da viagem. Depois, o colaborador presta contas com as notas. Recusar encerra o pedido.`,
         ok: 'Aprovar',
       }
@@ -576,7 +580,13 @@ export default function DetalhePage() {
                     {formatarData(sol.viagem_inicio)} a {formatarData(sol.viagem_fim)}
                   </dd>
                 </div>
-                {adiantamento && (
+                {adiantamento && sol.diarias === null && (
+                  <div>
+                    <dt>Valor do adiantamento</dt>
+                    <dd>{formatarMoeda(sol.valor_total)}</dd>
+                  </div>
+                )}
+                {adiantamento && sol.diarias !== null && (
                   <div>
                     <dt>Diárias</dt>
                     <dd>
@@ -586,6 +596,12 @@ export default function DetalhePage() {
                       )}{' '}
                       = {formatarMoeda(sol.valor_total)}
                     </dd>
+                  </div>
+                )}
+                {viagem && sol.linhas_diaria.length > 0 && (
+                  <div>
+                    <dt>Viagem internacional?</dt>
+                    <dd>{sol.viagem_internacional ? 'Sim' : 'Não'}</dd>
                   </div>
                 )}
                 {adiantamento && sol.valor_gasto !== null && (
@@ -674,6 +690,40 @@ export default function DetalhePage() {
           </section>
         )}
       </div>
+
+      {sol.linhas_diaria.length > 0 && (
+        <section className={ui.card}>
+          <h2 className={ui.subtitulo}>Diárias</h2>
+          <div style={{ overflowX: 'auto' }}>
+            <table className={ui.tabela}>
+              <thead>
+                <tr>
+                  <th>Categoria</th>
+                  <th className={ui.direita}>Quantidade</th>
+                  <th className={ui.direita}>Valor da diária</th>
+                  <th className={ui.direita}>Subtotal</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sol.linhas_diaria.map((l) => (
+                  <tr key={l.id}>
+                    <td>{l.tipo_rotulo}</td>
+                    <td className={ui.direita}>{l.quantidade}</td>
+                    <td className={ui.direita}>{formatarMoeda(l.valor_unitario, sol.moeda)}</td>
+                    <td className={ui.direita}>{formatarMoeda(l.subtotal, sol.moeda)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr>
+                  <th colSpan={3}>Total</th>
+                  <th className={ui.direita}>{formatarMoeda(sol.valor_total, sol.moeda)}</th>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </section>
+      )}
 
       {variasNotas && sol.despesas.length > 0 && (
         <section className={ui.card}>

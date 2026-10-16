@@ -71,6 +71,7 @@ MAX_DESPESAS_VIAGEM = 30  # notas por reembolso de viagem (e por prestação de 
 #  - lembrete da prestação 7 dias antes do prazo e aviso quando vencer
 #    (sem bloquear nem cancelar: o dinheiro já foi pago).
 VALOR_DIARIA = Decimal("135.00")
+MAX_LINHAS_DIARIA = 10  # linhas (integral/parcial) por Diária de Viagem
 MAX_DIARIAS = 60  # trava contra datas digitadas erradas (ex.: ano trocado)
 PRAZO_PRESTACAO_DIAS = 60  # depois da volta da viagem
 DIAS_LEMBRETE_PRESTACAO = 7  # antes do fim do prazo

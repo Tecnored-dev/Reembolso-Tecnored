@@ -73,6 +73,7 @@ from app.config import (
     LIMITE_SOLICITACAO,
     MAX_DESPESAS_VIAGEM,
     MAX_DIARIAS,
+    MAX_LINHAS_DIARIA,
     MOTIVOS,
     PRAZO_PRESTACAO_DIAS,
     VALOR_DIARIA,
@@ -80,7 +81,7 @@ from app.config import (
 )
 from app.models.cadastros import CentroCusto, Empresa
 from app.models.cadastros import Usuario as CadastroUsuario
-from app.models.solicitacao import Despesa, Historico, Solicitacao
+from app.models.solicitacao import Despesa, Historico, LinhaDiaria, Solicitacao
 from app.services import arquivos, gestores, notificacoes
 from app.services.erros import NaoEncontrado, RegraNegocio, SemPermissao
 from app.services.formatos import moeda
@@ -97,8 +98,8 @@ TIPO_ADIANTAMENTO = "adiantamento"
 ROTULO_TIPO = {
     TIPO_ALIMENTACAO: "Alimentação",
     TIPO_DIVERSAS: "Despesas diversas",
-    TIPO_VIAGEM: "Viagem",
-    TIPO_ADIANTAMENTO: "Adiantamento de viagem",
+    TIPO_VIAGEM: "Diária de Viagem",
+    TIPO_ADIANTAMENTO: "Adiantamento",
 }
 # "Reembolso de despesas - Prestação de Contas" (Thais, 15/10): alimentação ou
 # despesas diversas, com uma ou mais notas. Na alimentação cada nota tem a
@@ -109,6 +110,10 @@ CATEGORIA_DIVERSAS = "diversos"
 CATEGORIAS_REFEICAO_ALIMENTACAO = ("refeicao", "almoco_pinda")
 # Despesa especial do adiantamento: o comprovante da transferência da sobra.
 COMPROVANTE_DEVOLUCAO = "comprovante_devolucao"
+# Linhas da Diária de Viagem (Thais, 15/10): valor integral (fixo) ou parcial (informado).
+DIARIA_INTEGRAL = "integral"
+DIARIA_PARCIAL = "parcial"
+TIPOS_DIARIA = (DIARIA_INTEGRAL, DIARIA_PARCIAL)
 
 EM_CONFERENCIA = "em_conferencia"
 AGUARDANDO_GESTOR = "aguardando_gestor"
@@ -221,21 +226,32 @@ class DadosAdiantamento:
     descricao: str  # justificativa
     empresa_id: int
     gestor_email: str | None
-    # Diária complementar (quem recebe auxílio refeição): valor informado pelo
-    # colaborador, SOMADO às diárias normais (Thais, 13/10). None = sem complementar.
-    complementar: Decimal | None = None
+    # Valor pedido, informado pelo colaborador (Thais, 15/10). Sem cálculo por dia.
+    valor: Decimal
     beneficiario: Beneficiario | None = None
 
 
 @dataclass(frozen=True)
-class DadosViagem:
+class ItemDiaria:
+    """Uma linha da Diária de Viagem. `valor` só vale no tipo "parcial"; no
+    "integral" o valor é o fixo da política (VALOR_DIARIA)."""
+
+    tipo: str
+    quantidade: int
+    valor: Decimal | None = None
+
+
+@dataclass(frozen=True)
+class DadosDiaria:
     destino: str
     inicio: date
     fim: date
-    descricao: str  # justificativa
+    descricao: str  # motivo da viagem
     empresa_id: int
     gestor_email: str | None
-    itens: tuple[ItemViagem, ...]
+    linhas: tuple[ItemDiaria, ...]
+    # "Viagem internacional?" Internacional não tem diária (Thais, 15/10).
+    internacional: bool = False
     beneficiario: Beneficiario | None = None
     # Escolhido no pedido. Obrigatório ao criar; na correção, None mantém o atual.
     centro_custo_id: int | None = None
@@ -554,19 +570,16 @@ def _alerta_despesas(itens: tuple[ItemViagem, ...], tipo: str) -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# Reembolso de viagem (várias notas)
+# Diária de Viagem (linhas de valor integral ou parcial, sem notas)
 # ---------------------------------------------------------------------------
-def criar_viagem(
+def criar_diaria(
     db: Session,
     settings: Settings,
-    armazenamento: Armazenamento,
     usuario: Usuario,
-    dados: DadosViagem,
-    arquivos_enviados: list[arquivos.ArquivoValidado],
+    dados: DadosDiaria,
 ) -> Solicitacao:
     pessoa = _pessoa_do_pedido(db, settings, usuario, dados.beneficiario)
-    # Na criação nenhuma nota existe ainda: qualquer `id` é recusado.
-    _validar_viagem(dados, arquivos_enviados, existentes=set())
+    _validar_diaria(dados)
 
     agora = agora_utc()
     pula_gestor = pessoa.eh_gestor
@@ -579,6 +592,7 @@ def criar_viagem(
     )
     empresa = _empresa(db, dados.empresa_id)
     centro = _centro_custo(db, dados.centro_custo_id)
+    total = _total_diaria(dados.linhas)
 
     sol = Solicitacao(
         tipo=TIPO_VIAGEM,
@@ -597,63 +611,50 @@ def criar_viagem(
         destino=dados.destino.strip(),
         viagem_inicio=dados.inicio,
         viagem_fim=dados.fim,
-        valor_total=_total(dados.itens),
-        alerta_limite=_alerta_viagem(dados.itens),
+        viagem_internacional=False,
+        valor_total=total,
+        alerta_limite=_alerta_diaria(dados, total),
         enviado_em=agora,
         ultima_movimentacao_em=agora,
     )
+    sol.linhas_diaria = _linhas_diaria(dados.linhas)
     db.add(sol)
     db.flush()
     sol.codigo = f"REE-{sol.id:06d}"
-
-    salvas: list[str] = []
-    try:
-        for item in dados.itens:
-            arquivo = arquivos_enviados[item.arquivo or 0]
-            chave = arquivos.salvar(armazenamento, arquivo, sol.codigo, agora)
-            salvas.append(chave)
-            sol.despesas.append(_despesa_viagem(item, arquivo, chave, agora))
-        _registrar(db, sol, "enviado", None, EM_CONFERENCIA, usuario, None, agora)
-        _lembrar_centro_custo(db, usuario, centro)
-        notificacoes.enfileirar(
-            db,
-            settings,
-            sol,
-            notificacoes.emails_financeiro(db),
-            "Nova solicitação para conferir",
-            f"{_autor(usuario, sol)} enviou um reembolso de viagem ({dados.destino.strip()}) "
-            "para conferência.",
-        )
-        db.commit()
-    except Exception:
-        db.rollback()
-        for chave in salvas:
-            armazenamento.remover(chave)
-        raise
+    _registrar(db, sol, "enviado", None, EM_CONFERENCIA, usuario, None, agora)
+    _lembrar_centro_custo(db, usuario, centro)
+    notificacoes.enfileirar(
+        db,
+        settings,
+        sol,
+        notificacoes.emails_financeiro(db),
+        "Nova solicitação para conferir",
+        f"{_autor(usuario, sol)} enviou uma diária de viagem ({dados.destino.strip()}) "
+        "para conferência.",
+    )
+    db.commit()
     return sol
 
 
-def reenviar_viagem(
+def reenviar_diaria(
     db: Session,
     settings: Settings,
-    armazenamento: Armazenamento,
     usuario: Usuario,
     sol_id: int,
-    dados: DadosViagem,
-    arquivos_enviados: list[arquivos.ArquivoValidado],
+    dados: DadosDiaria,
 ) -> Solicitacao:
-    """Correção de um reembolso de viagem devolvido.
-
-    A lista enviada substitui a anterior: notas com `id` são mantidas (e
-    atualizadas), notas sem `id` são novas, e as que não vierem são removidas.
-    """
+    """Correção de uma diária devolvida: as linhas enviadas substituem as anteriores."""
     sol = obter(db, usuario, sol_id)
     _exigir(eh_dono(sol, usuario), "Só quem pediu pode corrigir.")
     _exigir_status(sol, DEVOLVIDO)
     if sol.tipo != TIPO_VIAGEM:
-        raise RegraNegocio("Esta solicitação não é de viagem.")
-    atuais = {d.id: d for d in sol.despesas}
-    _validar_viagem(dados, arquivos_enviados, existentes=set(atuais))
+        raise RegraNegocio("Esta solicitação não é de diária de viagem.")
+    if sol.despesas:
+        raise RegraNegocio(
+            "Este pedido é do modelo antigo de viagem (com notas). Abra um novo pedido: "
+            "a diária agora não leva notas; as despesas vão no Reembolso de despesas."
+        )
+    _validar_diaria(dados)
     if not sol.pula_gestor:
         gestor = _validar_gestor(
             db, settings, sol.solicitante_email, sol.criado_por_email, dados.gestor_email
@@ -665,43 +666,89 @@ def reenviar_viagem(
     sol.descricao = dados.descricao.strip()
     sol.destino = dados.destino.strip()
     sol.viagem_inicio, sol.viagem_fim = dados.inicio, dados.fim
-    sol.valor_total = _total(dados.itens)
-    sol.alerta_limite = _alerta_viagem(dados.itens)
+    sol.viagem_internacional = False
+    sol.valor_total = _total_diaria(dados.linhas)
+    sol.alerta_limite = _alerta_diaria(dados, sol.valor_total)
+    sol.linhas_diaria.clear()
+    db.flush()
+    sol.linhas_diaria.extend(_linhas_diaria(dados.linhas))
 
     agora = agora_utc()
-    novas_chaves: list[str] = []
-    chaves_antigas: list[str] = []
-    try:
-        _sincronizar_notas(
-            sol,
-            atuais,
-            dados.itens,
-            arquivos_enviados,
-            armazenamento,
-            agora,
-            novas_chaves,
-            chaves_antigas,
-        )
-        sol.motivo_devolucao = None
-        sol.devolvido_por = sol.devolvido_em = sol.lembrete_expiracao_em = None
-        _mudar(db, sol, EM_CONFERENCIA, "reenviado", usuario, None, agora)
-        notificacoes.enfileirar(
-            db,
-            settings,
-            sol,
-            notificacoes.emails_financeiro(db),
-            "Solicitação corrigida para conferir",
-            f"{usuario.nome} corrigiu e reenviou a solicitação.",
-        )
-        db.commit()
-    except Exception:
-        db.rollback()
-        for chave in novas_chaves:
-            armazenamento.remover(chave)
-        raise
-    for chave in chaves_antigas:
-        armazenamento.remover(chave)
+    sol.motivo_devolucao = None
+    sol.devolvido_por = sol.devolvido_em = sol.lembrete_expiracao_em = None
+    _mudar(db, sol, EM_CONFERENCIA, "reenviado", usuario, None, agora)
+    notificacoes.enfileirar(
+        db,
+        settings,
+        sol,
+        notificacoes.emails_financeiro(db),
+        "Solicitação corrigida para conferir",
+        f"{usuario.nome} corrigiu e reenviou a solicitação.",
+    )
+    db.commit()
     return sol
+
+
+def _validar_diaria(dados: DadosDiaria) -> None:
+    if dados.internacional:
+        raise RegraNegocio(
+            "Viagem internacional não tem diária. Se precisar de valor antes de viajar, "
+            "peça um Adiantamento; as despesas com nota vão no Reembolso de despesas."
+        )
+    if not dados.destino.strip():
+        raise RegraNegocio("Informe o destino da viagem.")
+    if len(dados.destino) > 200:
+        raise RegraNegocio("Destino muito longo (máximo 200 caracteres).")
+    if dados.fim < dados.inicio:
+        raise RegraNegocio("O fim da viagem não pode ser antes do início.")
+    if not dados.descricao.strip():
+        raise RegraNegocio("Explique o motivo da viagem.")
+    if len(dados.descricao) > 500:
+        raise RegraNegocio("Motivo muito longo (máximo 500 caracteres).")
+    if not dados.linhas:
+        raise RegraNegocio("Inclua pelo menos uma linha de diária.")
+    if len(dados.linhas) > MAX_LINHAS_DIARIA:
+        raise RegraNegocio(f"Máximo de {MAX_LINHAS_DIARIA} linhas por solicitação.")
+    for n, linha in enumerate(dados.linhas, start=1):
+        if linha.tipo not in TIPOS_DIARIA:
+            raise RegraNegocio(f"Linha {n}: escolha Valor Integral ou Valor Parcial.")
+        if not 1 <= linha.quantidade <= MAX_DIARIAS:
+            raise RegraNegocio(
+                f"Linha {n}: a quantidade de diárias deve ficar entre 1 e {MAX_DIARIAS}."
+            )
+        if linha.tipo == DIARIA_PARCIAL and (linha.valor is None or linha.valor <= 0):
+            raise RegraNegocio(f"Linha {n}: informe o valor da diária parcial.")
+
+
+def _valor_linha(linha: ItemDiaria) -> Decimal:
+    if linha.tipo == DIARIA_INTEGRAL:
+        return VALOR_DIARIA
+    return linha.valor or Decimal("0.00")
+
+
+def _total_diaria(linhas: tuple[ItemDiaria, ...]) -> Decimal:
+    return sum((_valor_linha(i) * i.quantidade for i in linhas), Decimal("0.00"))
+
+
+def _linhas_diaria(linhas: tuple[ItemDiaria, ...]) -> list[LinhaDiaria]:
+    return [
+        LinhaDiaria(tipo=i.tipo, quantidade=i.quantidade, valor_unitario=_valor_linha(i))
+        for i in linhas
+    ]
+
+
+def _alerta_diaria(dados: DadosDiaria, total: Decimal) -> str | None:
+    """Alertas (não bloqueiam): mais diárias do que dias de viagem e total alto."""
+    alertas = []
+    dias = calcular_diarias(dados.inicio, dados.fim)
+    quantidade = sum(i.quantidade for i in dados.linhas)
+    if quantidade > dias:
+        alertas.append(
+            f"Quantidade de diárias ({quantidade}) maior que os dias da viagem ({dias})."
+        )
+    if total > LIMITE_SOLICITACAO:
+        alertas.append(f"Total acima do limite por solicitação ({moeda(LIMITE_SOLICITACAO)}).")
+    return " ".join(alertas) or None
 
 
 def _sincronizar_notas(
@@ -741,22 +788,6 @@ def _sincronizar_notas(
             despesa.arquivo_chave = chave
             despesa.arquivo_nome, despesa.arquivo_tipo = arquivo.nome, arquivo.tipo
             despesa.arquivo_tamanho = len(arquivo.conteudo)
-
-
-def _validar_viagem(
-    dados: DadosViagem, arquivos_enviados: list[arquivos.ArquivoValidado], existentes: set[int]
-) -> None:
-    if not dados.destino.strip():
-        raise RegraNegocio("Informe o destino da viagem.")
-    if len(dados.destino) > 200:
-        raise RegraNegocio("Destino muito longo (máximo 200 caracteres).")
-    if dados.fim < dados.inicio:
-        raise RegraNegocio("O fim da viagem não pode ser antes do início.")
-    if not dados.descricao.strip():
-        raise RegraNegocio("Explique o motivo da viagem.")
-    if len(dados.descricao) > 500:
-        raise RegraNegocio("Justificativa muito longa (máximo 500 caracteres).")
-    _validar_itens(dados.itens, arquivos_enviados, existentes)
 
 
 def _validar_itens(
@@ -801,6 +832,7 @@ def _total(itens: tuple[ItemViagem, ...]) -> Decimal:
 
 
 def _alerta_viagem(itens: tuple[ItemViagem, ...]) -> str | None:
+    """Alertas da prestação de contas do adiantamento (refeição por dia e total)."""
     alertas = []
     por_dia: dict[date, Decimal] = {}
     for item in itens:
@@ -845,7 +877,7 @@ def criar_adiantamento(
     dados: DadosAdiantamento,
 ) -> Solicitacao:
     pessoa = _pessoa_do_pedido(db, settings, usuario, dados.beneficiario)
-    diarias = _validar_adiantamento(dados)
+    _validar_adiantamento(dados)
 
     agora = agora_utc()
     pula_gestor = pessoa.eh_gestor
@@ -857,7 +889,7 @@ def criar_adiantamento(
         )
     )
     empresa = _empresa(db, dados.empresa_id)
-    valor = _valor_adiantamento(dados, diarias)
+    valor = dados.valor
     status = AGUARDANDO_PAGAMENTO if pula_gestor else AGUARDANDO_GESTOR
 
     sol = Solicitacao(
@@ -877,8 +909,6 @@ def criar_adiantamento(
         destino=dados.destino.strip(),
         viagem_inicio=dados.inicio,
         viagem_fim=dados.fim,
-        diarias=diarias,
-        valor_complementar=dados.complementar,
         valor_total=valor,
         alerta_limite=_alerta_total(valor),
         enviado_em=agora,
@@ -908,7 +938,7 @@ def reenviar_adiantamento(
     _exigir_status(sol, DEVOLVIDO)
     if sol.tipo != TIPO_ADIANTAMENTO:
         raise RegraNegocio("Esta solicitação não é de adiantamento.")
-    diarias = _validar_adiantamento(dados)
+    _validar_adiantamento(dados)
     if not sol.pula_gestor:
         gestor = _validar_gestor(
             db, settings, sol.solicitante_email, sol.criado_por_email, dados.gestor_email
@@ -918,9 +948,9 @@ def reenviar_adiantamento(
     sol.descricao = dados.descricao.strip()
     sol.destino = dados.destino.strip()
     sol.viagem_inicio, sol.viagem_fim = dados.inicio, dados.fim
-    sol.diarias = diarias
-    sol.valor_complementar = dados.complementar
-    sol.valor_total = _valor_adiantamento(dados, diarias)
+    sol.diarias = None
+    sol.valor_complementar = None
+    sol.valor_total = dados.valor
     sol.alerta_limite = _alerta_total(sol.valor_total)
 
     agora = agora_utc()
@@ -1304,12 +1334,14 @@ def _avisar_pedido_adiantamento(
 
 
 def _descrever_diarias(sol: Solicitacao) -> str:
+    if sol.diarias is None:  # pedido novo: valor informado pelo colaborador
+        return moeda(sol.valor_total)
     if sol.valor_complementar is not None:
         return f"{sol.diarias} diária(s) + diária complementar de {moeda(sol.valor_complementar)}"
     return f"{sol.diarias} diária(s)"
 
 
-def _validar_adiantamento(dados: DadosAdiantamento) -> int:
+def _validar_adiantamento(dados: DadosAdiantamento) -> None:
     if not dados.destino.strip():
         raise RegraNegocio("Informe o destino da viagem.")
     if len(dados.destino) > 200:
@@ -1320,20 +1352,8 @@ def _validar_adiantamento(dados: DadosAdiantamento) -> int:
         raise RegraNegocio("Explique o motivo da viagem.")
     if len(dados.descricao) > 500:
         raise RegraNegocio("Justificativa muito longa (máximo 500 caracteres).")
-    if dados.complementar is not None and dados.complementar <= 0:
-        raise RegraNegocio("Informe o valor da diária complementar.")
-    diarias = calcular_diarias(dados.inicio, dados.fim)
-    if diarias > MAX_DIARIAS:
-        raise RegraNegocio(
-            f"Período longo demais ({diarias} dias). Confira as datas "
-            f"(máximo {MAX_DIARIAS} diárias)."
-        )
-    return diarias
-
-
-def _valor_adiantamento(dados: DadosAdiantamento, diarias: int) -> Decimal:
-    """Diárias normais + diária complementar (se houver), que SOMA (Thais, 13/10)."""
-    return VALOR_DIARIA * diarias + (dados.complementar or Decimal("0.00"))
+    if dados.valor <= 0:
+        raise RegraNegocio("Informe o valor do adiantamento.")
 
 
 def _alerta_total(valor: Decimal) -> str | None:

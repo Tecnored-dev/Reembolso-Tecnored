@@ -150,20 +150,17 @@ def test_viagem_e_adiantamento_em_nome_de_outra_pessoa(cenario):
     ontem = (HOJE - timedelta(days=1)).isoformat()
     r = cenario.post(
         "/api/solicitacoes/viagem",
-        data={
+        json={
             "destino": "Marabá - PA",
             "viagem_inicio": ontem,
             "viagem_fim": ontem,
             "descricao": "Visita",
-            "empresa_id": "1",
+            "empresa_id": 1,
             "centro_custo_id": "1",
             "gestor_email": GESTOR,
             "beneficiario_email": BENEF,
-            "despesas": json.dumps(
-                [{"categoria": "taxi_uber", "data_despesa": ontem, "valor": "30", "arquivo": 0}]
-            ),
+            "linhas": [{"tipo": "integral", "quantidade": 1}],
         },
-        files=[("arquivos", ("t.jpg", JPG, "image/jpeg"))],
     )
     assert r.status_code == 201, r.text
     assert r.json()["solicitante_email"] == BENEF
@@ -176,6 +173,7 @@ def test_viagem_e_adiantamento_em_nome_de_outra_pessoa(cenario):
             "viagem_fim": ontem,
             "descricao": "Feira",
             "empresa_id": 1,
+            "valor": "135,00",
             "gestor_email": GESTOR,
             "beneficiario_email": BENEF,
         },
