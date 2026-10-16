@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import Icone, { type NomeIcone } from '@/components/Icone'
 import StatusBadge from '@/components/StatusBadge'
@@ -27,8 +28,17 @@ interface Props {
 // Uma tela de lista serve para tudo: meus pedidos, as filas do financeiro e
 // do gestor, e a visão geral. Muda só o "escopo" pedido à API.
 export default function ListaPage({ escopo, titulo, descricao, vazio }: Props) {
-  const { data, loading, error } = useApi<SolicitacaoResumo[]>(
+  const { data: recebidos, loading, error } = useApi<SolicitacaoResumo[]>(
     `/api/solicitacoes?escopo=${escopo}`
+  )
+  // Nas filas de trabalho, o pedido parado há mais tempo vem primeiro.
+  const fila = escopo === 'conferencia' || escopo === 'aprovacao' || escopo === 'pagamento'
+  const data = useMemo(
+    () =>
+      recebidos && fila
+        ? [...recebidos].sort((a, b) => a.ultima_movimentacao_em.localeCompare(b.ultima_movimentacao_em))
+        : recebidos,
+    [recebidos, fila]
   )
   const navigate = useNavigate()
   const mostrarSolicitante = escopo !== 'minhas'
