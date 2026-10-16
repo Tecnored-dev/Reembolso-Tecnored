@@ -132,11 +132,13 @@ export default function DetalhePage() {
   useEffect(carregar, [carregar])
 
   // A nota vem da API com o cookie de sessão; vira um blob local para exibir.
-  // Alimentação tem uma nota e ela abre direto; em viagem e na prestação de
-  // contas do adiantamento, a pessoa escolhe qual ver.
+  // Com uma nota só, ela abre direto; com várias (viagem, prestação de contas
+  // do adiantamento e reembolso de despesas), a pessoa escolhe qual ver.
   const viagem = sol?.tipo === 'viagem'
   const adiantamento = sol?.tipo === 'adiantamento'
-  const variasNotas = viagem || adiantamento
+  const comViagem = viagem || adiantamento
+  // Reembolso de despesas pode ter várias notas (Thais, 15/10); com uma só, ela abre direto.
+  const variasNotas = comViagem || (sol?.despesas.length ?? 0) > 1
   const [notaAberta, setNotaAberta] = useState<number | null>(null)
   const despesa = variasNotas
     ? sol?.despesas.find((d) => d.id === notaAberta)
@@ -562,7 +564,7 @@ export default function DetalhePage() {
               <dt>Gestor</dt>
               <dd>{sol.pula_gestor ? 'Não se aplica (solicitante é gestor)' : sol.gestor_nome}</dd>
             </div>
-            {variasNotas ? (
+            {comViagem ? (
               <>
                 <div>
                   <dt>Destino</dt>
@@ -601,10 +603,18 @@ export default function DetalhePage() {
               </>
             ) : (
               <>
-                <div>
-                  <dt>Data da despesa</dt>
-                  <dd>{formatarData(sol.despesas[0]?.data_despesa ?? null)}</dd>
-                </div>
+                {sol.despesas.length === 1 && (
+                  <div>
+                    <dt>Data da despesa</dt>
+                    <dd>{formatarData(sol.despesas[0].data_despesa)}</dd>
+                  </div>
+                )}
+                {sol.despesas.length === 1 && sol.tipo === 'alimentacao' && (
+                  <div>
+                    <dt>Categoria</dt>
+                    <dd>{sol.despesas[0].categoria_rotulo}</dd>
+                  </div>
+                )}
                 {sol.motivo && (
                   <div>
                     <dt>Motivo</dt>
@@ -632,7 +642,7 @@ export default function DetalhePage() {
               </div>
             )}
             <div style={{ gridColumn: '1 / -1' }}>
-              <dt>{variasNotas ? 'Motivo da viagem' : 'Descrição'}</dt>
+              <dt>{comViagem ? 'Motivo da viagem' : 'Descrição'}</dt>
               <dd>{sol.descricao}</dd>
             </div>
           </dl>

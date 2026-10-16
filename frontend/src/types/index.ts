@@ -90,8 +90,8 @@ export interface Cadastros {
   categorias_viagem: { id: CategoriaViagem; rotulo: string }[]
   /** Motivos da despesa (lista do ARGO) — alimentação e despesas diversas */
   motivos: string[]
-  /** Onde foi a refeição (só alimentação): define o limite do alerta */
-  locais_refeicao: { id: string; rotulo: string; limite: string }[]
+  /** Reembolso de despesas - alimentação: limite de refeição por dia (só alerta) */
+  limite_alimentacao_dia: string
   /** Adiantamento: valor de uma diária e máximo de diárias por pedido */
   valor_diaria: string
   max_diarias: number
@@ -99,8 +99,8 @@ export interface Cadastros {
 
 export type TipoSolicitacao = 'alimentacao' | 'viagem' | 'adiantamento' | 'diversas'
 
-/** Tipos com uma nota só, no formulário simples. */
-export type TipoUmaNota = 'alimentacao' | 'diversas'
+/** "Reembolso de despesas - Prestação de Contas": alimentação ou despesas diversas. */
+export type TipoDespesas = 'alimentacao' | 'diversas'
 
 /** Chave do tipo de despesa de viagem (a lista vem de GET /api/cadastros). */
 export type CategoriaViagem = string
@@ -164,7 +164,7 @@ export interface Solicitacao extends SolicitacaoResumo {
   pula_gestor: boolean
   /** Alimentação e despesas diversas (nulo em pedidos antigos) */
   motivo: string | null
-  /** Só alimentação: pinda, maraba ou outro */
+  /** Pedidos antigos (antes de 15/10): pinda, maraba ou outro */
   local_refeicao: string | null
   local_refeicao_rotulo: string | null
   viagem_inicio: string | null

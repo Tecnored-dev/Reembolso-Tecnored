@@ -53,6 +53,8 @@ LOCAIS_REFEICAO = {
 DIAS_LEMBRETE_DEVOLVIDO = 13  # lembrete ao colaborador com solicitação devolvida parada
 DIAS_EXPIRACAO_DEVOLVIDO = 15  # depois disso, cancela
 ARQUIVO_TAMANHO_MAX = 10 * 1024 * 1024  # 10 MB por nota
+# Reembolso de alimentação: refeição até R$ 40 por dia (Thais, 15/10): só ALERTA.
+LIMITE_ALIMENTACAO_DIA = Decimal("40.00")
 LIMITE_SOLICITACAO = Decimal("5000.00")  # total por solicitação: só ALERTA, não bloqueia
 MAX_DESPESAS_VIAGEM = 30  # notas por reembolso de viagem (e por prestação de contas)
 

@@ -14,21 +14,35 @@ interface Props {
   notas: NotaForm[]
   setNotas: Dispatch<SetStateAction<NotaForm[]>>
   cadastros: Cadastros | null
+  /** Despesas diversas: as notas não têm categoria. */
+  semCategoria?: boolean
+  /** Limite de refeição por dia (padrão: o da viagem, R$ 135). */
+  limiteDia?: number
+  /** Categorias que contam como refeição para o limite. */
+  categoriasRefeicao?: string[]
 }
 
-// Lista de notas de viagem (categoria, data, valor, descrição e arquivo), com
-// total e alertas da política. Usada no reembolso de viagem e na prestação de
-// contas do adiantamento.
-export default function NotasViagem({ notas, setNotas, cadastros }: Props) {
+// Lista de notas (categoria, data, valor, descrição e arquivo), com total e
+// alertas da política. Usada no reembolso de despesas, no reembolso de viagem
+// e na prestação de contas do adiantamento.
+export default function NotasViagem({
+  notas,
+  setNotas,
+  cadastros,
+  semCategoria = false,
+  limiteDia,
+  categoriasRefeicao,
+}: Props) {
   const total = useMemo(() => somarValores(notas.map((n) => n.valor)), [notas])
   const alertas = useMemo(
     () =>
       alertasViagem(
         notas.map((n) => ({ categoria: n.categoria, data: n.data, valor: n.valor })),
-        Number(cadastros?.limite_refeicao_dia ?? 0),
-        Number(cadastros?.limite_solicitacao ?? 0)
+        semCategoria ? 0 : (limiteDia ?? Number(cadastros?.limite_refeicao_dia ?? 0)),
+        Number(cadastros?.limite_solicitacao ?? 0),
+        categoriasRefeicao
       ),
-    [notas, cadastros]
+    [notas, cadastros, semCategoria, limiteDia, categoriasRefeicao]
   )
 
   function mudarNota(chave: number, mudanca: Partial<NotaForm>) {
@@ -53,22 +67,24 @@ export default function NotasViagem({ notas, setNotas, cadastros }: Props) {
               )}
             </div>
             <div className={styles.linha}>
-              <div className={ui.campo}>
-                <label htmlFor={`cat-${n.chave}`}>Categoria</label>
-                <select
-                  id={`cat-${n.chave}`}
-                  value={n.categoria}
-                  onChange={(e) => mudarNota(n.chave, { categoria: e.target.value as CategoriaViagem })}
-                  required
-                >
-                  <option value="">Selecione…</option>
-                  {cadastros?.categorias_viagem.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.rotulo}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              {!semCategoria && (
+                <div className={ui.campo}>
+                  <label htmlFor={`cat-${n.chave}`}>Categoria</label>
+                  <select
+                    id={`cat-${n.chave}`}
+                    value={n.categoria}
+                    onChange={(e) => mudarNota(n.chave, { categoria: e.target.value as CategoriaViagem })}
+                    required
+                  >
+                    <option value="">Selecione…</option>
+                    {cadastros?.categorias_viagem.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.rotulo}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
               <div className={ui.campo}>
                 <label htmlFor={`data-${n.chave}`}>Data</label>
                 <input
