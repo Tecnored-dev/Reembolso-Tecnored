@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { useContexto } from '@/components/contexto'
+import Icone from '@/components/Icone'
 import StatusBadge from '@/components/StatusBadge'
+import { comQuemEsta, VISUAL } from '@/statusVisual'
 import { api } from '@/services/api'
 import ui from '@/styles/ui.module.css'
 import type { Solicitacao, Status } from '@/types'
@@ -283,15 +285,35 @@ export default function DetalhePage() {
 
         {sol.status !== 'cancelado' && (
           <ol className={styles.etapas} aria-label="Andamento">
-            {etapas(sol).map((e) => (
+            {etapas(sol).map((e, i) => (
               <li
                 key={e.rotulo}
                 className={e.feita ? styles.feita : e.atual ? styles.atual : undefined}
+                aria-current={e.atual ? 'step' : undefined}
               >
+                <span className={styles.marco} aria-hidden="true">
+                  {e.feita ? <Icone nome="check" tamanho={16} /> : i + 1}
+                </span>
                 {e.rotulo}
               </li>
             ))}
           </ol>
+        )}
+
+        {!['cancelado', 'recusado', 'pago', 'encerrado'].includes(sol.status) && (
+          <div
+            className={
+              VISUAL[sol.status]?.familia === 'voce' ? `${styles.agora} ${styles.agoraVoce}` : styles.agora
+            }
+          >
+            <span className={styles.agoraIc}>
+              <Icone nome={VISUAL[sol.status]?.icone ?? 'info'} tamanho={20} />
+            </span>
+            <span>
+              <strong>{comQuemEsta(sol.status, sol.gestor_nome).quem}.</strong>{' '}
+              {comQuemEsta(sol.status, sol.gestor_nome).frase}
+            </span>
+          </div>
         )}
 
         {sol.status === 'devolvido' && (
@@ -364,8 +386,9 @@ export default function DetalhePage() {
           </div>
         )}
         {sol.alerta_limite && (
-          <div className={ui.aviso} style={{ marginTop: 12 }}>
-            ⚠️ {sol.alerta_limite}
+          <div className={`${ui.aviso} ${styles.alertaLimite}`} style={{ marginTop: 12 }}>
+            <Icone nome="alerta" tamanho={20} />
+            <span>{sol.alerta_limite}</span>
           </div>
         )}
       </section>
@@ -769,9 +792,11 @@ export default function DetalhePage() {
         </section>
       )}
 
-      <section className={ui.card}>
-        <h2 className={ui.subtitulo}>Histórico</h2>
-        <ul className={styles.historico}>
+      <details className={ui.card}>
+        <summary className={styles.resumoHistorico}>
+          Histórico <span className={styles.contagem}>({sol.historico.length})</span>
+        </summary>
+        <ul className={styles.historico} style={{ marginTop: 12 }}>
           {[...sol.historico].reverse().map((h, i) => (
             <li key={i}>
               <div>
@@ -782,7 +807,7 @@ export default function DetalhePage() {
             </li>
           ))}
         </ul>
-      </section>
+      </details>
     </>
   )
 }

@@ -1,12 +1,18 @@
 .valor {
-  font-size: 1.6rem;
+  font-size: 32px;
+  line-height: 36px;
   font-weight: 700;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
 }
 
 .valorRotulo {
   display: block;
-  font-size: 0.75rem;
+  font-size: 12px;
+  line-height: 16px;
   font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
   color: var(--color-text-muted);
 }
 
@@ -14,45 +20,120 @@
   background: none;
   border: none;
   padding: 0;
-  color: var(--color-primary-dk);
+  color: var(--color-tecnored-primary-dark);
   text-decoration: underline;
   cursor: pointer;
   font: inherit;
 }
 
+/* Linha do tempo: onde o pedido está e o que falta. */
 .etapas {
   list-style: none;
   display: flex;
-  gap: 4px;
-  counter-reset: etapa;
+  margin-top: var(--space-2);
 }
 
 .etapas li {
-  flex: 1;
-  /* o adiantamento tem 7 etapas: no celular elas encolhem e quebram a linha */
+  flex: 1 1 0;
   min-width: 0;
-  overflow-wrap: anywhere;
-  hyphens: auto;
+  position: relative;
+  display: grid;
+  justify-items: center;
+  align-content: start;
+  gap: 6px;
   text-align: center;
-  font-size: 0.78rem;
-  font-weight: 600;
+  font-size: 13px;
+  line-height: 16px;
   color: var(--color-text-muted);
-  padding-top: 10px;
-  border-top: 4px solid var(--color-border);
+}
+
+.etapas li::before {
+  content: '';
+  position: absolute;
+  top: 13px;
+  left: calc(-50% + 16px);
+  right: calc(50% + 16px);
+  height: 3px;
+  border-radius: 2px;
+  background: var(--color-border);
+}
+
+.etapas li:first-child::before {
+  display: none;
+}
+
+.marco {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  border: 2px solid var(--color-border-strong);
+  background: var(--color-surface);
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .etapas li.feita {
-  color: var(--color-primary-dk);
-  border-top-color: var(--color-primary);
+  color: var(--color-text);
+}
+
+.etapas li.feita::before,
+.etapas li.atual::before {
+  background: var(--color-tecnored-accent);
+}
+
+.etapas li.feita .marco {
+  background: var(--color-tecnored-accent);
+  border-color: var(--color-tecnored-accent);
+  color: var(--color-on-botao);
 }
 
 .etapas li.atual {
-  color: #92400e;
-  border-top-color: #f59e0b;
+  color: var(--color-tecnored-primary);
+  font-weight: 700;
+}
+
+.etapas li.atual .marco {
+  border-color: var(--color-tecnored-primary);
+  color: var(--color-tecnored-primary);
+  box-shadow: 0 0 0 4px var(--color-tecnored-bg-soft);
+}
+
+/* Bloco "agora": com quem está o pedido e o que acontece. */
+.agora {
+  margin-top: var(--space-4);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-tecnored-bg-soft);
+  color: var(--color-tecnored-primary-dark);
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  line-height: 22px;
+}
+
+.agoraVoce {
+  background: var(--color-status-voce-bg);
+  color: var(--color-status-voce);
+}
+
+.agora strong {
+  font-weight: 700;
+}
+
+.agoraIc {
+  margin-top: 1px;
+}
+
+.alertaLimite {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
 }
 
 .acoes {
-  border-left: 4px solid var(--color-primary);
+  border-left: 4px solid var(--color-tecnored-primary);
 }
 
 .colunas {
@@ -70,8 +151,33 @@
     grid-template-columns: 1fr;
   }
 
+  /* Celular: vertical, para caber as 7 etapas do adiantamento. */
+  .etapas {
+    flex-direction: column;
+  }
+
   .etapas li {
-    font-size: 0.68rem;
+    grid-template-columns: 28px 1fr;
+    justify-items: start;
+    align-items: center;
+    text-align: left;
+    gap: 12px;
+    font-size: 15px;
+    line-height: 20px;
+    padding-bottom: 14px;
+  }
+
+  .etapas li:last-child {
+    padding-bottom: 0;
+  }
+
+  .etapas li::before {
+    top: -14px;
+    bottom: auto;
+    left: 13px;
+    right: auto;
+    width: 2px;
+    height: 14px;
   }
 }
 
@@ -93,7 +199,7 @@
   display: flex;
   justify-content: space-between;
   gap: 12px;
-  font-size: 0.9rem;
+  font-size: 15px;
   padding-bottom: 10px;
   border-bottom: 1px solid var(--color-border);
 }
@@ -105,4 +211,31 @@
 .comentario {
   color: var(--color-text-muted);
   font-style: italic;
+}
+
+.resumoHistorico {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 18px;
+  line-height: 24px;
+  font-weight: 700;
+  min-height: var(--alvo-toque);
+}
+
+.resumoHistorico::-webkit-details-marker {
+  display: none;
+}
+
+.resumoHistorico:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.contagem {
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--color-text-muted);
 }
