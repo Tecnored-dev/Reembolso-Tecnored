@@ -1,7 +1,10 @@
-"""Fluxo de alimentação: Thais confere → gestor aprova → Thais paga."""
+"""Reembolso de despesas - alimentação: Thais confere → gestor aprova → Thais paga.
+
+Desde 15/10 o pedido aceita várias notas, cada uma com categoria (Thais)."""
 
 from __future__ import annotations
 
+import json
 from datetime import date, timedelta
 
 import pytest
@@ -31,22 +34,68 @@ def completar_perfil(cliente):
     assert r.status_code == 200, r.text
 
 
-def enviar(
-    cliente, *, valor="45,90", gestor=GESTOR, arquivo=("nota.jpg", JPG, "image/jpeg"), **extra
-):
-    dados = {
-        "data_despesa": extra.get("data_despesa", date.today().isoformat()),
+def nota_despesa(
+    valor="45,90", data=None, categoria="refeicao", arquivo=0, id=None, descricao=""
+) -> dict:
+    nota = {
+        "categoria": categoria,
+        "data_despesa": data or date.today().isoformat(),
         "valor": valor,
-        "descricao": extra.get("descricao", "Almoço com cliente"),
-        "motivo": extra.get("motivo", "Visita técnica"),
-        "local_refeicao": extra.get("local_refeicao", "outro"),
-        "empresa_id": extra.get("empresa_id", "1"),
-        "centro_custo_id": extra.get("centro_custo_id", "1"),
+        "descricao": descricao,
+    }
+    if arquivo is not None:
+        nota["arquivo"] = arquivo
+    if id is not None:
+        nota["id"] = id
+    return nota
+
+
+def corpo_despesas(notas: list[dict], gestor=GESTOR, **extra) -> dict:
+    dados = {
+        "descricao": extra.pop("descricao", "Almoço com cliente"),
+        "motivo": extra.pop("motivo", "Visita técnica"),
+        "empresa_id": extra.pop("empresa_id", "1"),
+        "centro_custo_id": extra.pop("centro_custo_id", "1"),
+        "despesas": json.dumps(notas),
+        **extra,
     }
     if gestor:
-        dados["gestor_email"] = gestor
-    files = {"arquivo": arquivo} if arquivo else None
-    return cliente.post("/api/solicitacoes/alimentacao", data=dados, files=files)
+        dados.setdefault("gestor_email", gestor)
+    return dados
+
+
+def enviar(
+    cliente,
+    *,
+    valor="45,90",
+    gestor=GESTOR,
+    arquivo=("nota.jpg", JPG, "image/jpeg"),
+    rota="alimentacao",
+    **extra,
+):
+    """Um pedido com uma nota (ou as notas de `notas=[...]`)."""
+    notas = extra.pop("notas", None) or [
+        nota_despesa(
+            valor,
+            extra.pop("data_despesa", None),
+            extra.pop("categoria", "refeicao"),
+            0 if arquivo else None,
+        )
+    ]
+    arquivos = extra.pop("arquivos", None) or ([("arquivos", arquivo)] if arquivo else [])
+    return cliente.post(
+        f"/api/solicitacoes/{rota}",
+        data=corpo_despesas(notas, gestor, **extra),
+        files=arquivos or None,
+    )
+
+
+def reenviar(cliente, sol: dict, notas: list[dict], arquivos=None, **extra):
+    return cliente.post(
+        f"/api/solicitacoes/{sol['id']}/reenviar",
+        data=corpo_despesas(notas, **extra),
+        files=arquivos or None,
+    )
 
 
 @pytest.fixture
@@ -164,18 +213,13 @@ def test_reenvio_depois_da_devolucao_do_financeiro_troca_o_arquivo(cenario):
 
     entrar(cenario, COLAB)
     antiga = cenario.storage.raiz.rglob("*.jpg").__next__()
-    r = cenario.post(
-        f"/api/solicitacoes/{sol['id']}/reenviar",
-        data={
-            "data_despesa": date.today().isoformat(),
-            "valor": "50,00",
-            "descricao": "Almoço (nota nova)",
-            "motivo": "Visita técnica",
-            "local_refeicao": "outro",
-            "empresa_id": "1",
-            "gestor_email": GESTOR,
-        },
-        files={"arquivo": ("nota.pdf", PDF, "application/pdf")},
+    nota = nota_despesa("50,00", arquivo=0, id=sol["despesas"][0]["id"])
+    r = reenviar(
+        cenario,
+        sol,
+        [nota],
+        [("arquivos", ("nota.pdf", PDF, "application/pdf"))],
+        descricao="Almoço (nota nova)",
     )
     corpo = r.json()
     assert r.status_code == 200, r.text
@@ -190,18 +234,7 @@ def test_financeiro_pode_devolver_e_reenviar_sem_trocar_arquivo(cenario):
     sol = criar(cenario)
     decidir(cenario, sol["id"], "conferir", THAIS, "financeiro", False, "Falta o CNPJ")
     entrar(cenario, COLAB)
-    r = cenario.post(
-        f"/api/solicitacoes/{sol['id']}/reenviar",
-        data={
-            "data_despesa": date.today().isoformat(),
-            "valor": "45,90",
-            "descricao": "Almoço",
-            "motivo": "Visita técnica",
-            "local_refeicao": "outro",
-            "empresa_id": "1",
-            "gestor_email": GESTOR,
-        },
-    )
+    r = reenviar(cenario, sol, [nota_despesa(arquivo=None, id=sol["despesas"][0]["id"])])
     assert r.json()["status"] == "em_conferencia"
     assert r.json()["despesas"][0]["arquivo_tipo"] == "image/jpeg"
 
@@ -221,10 +254,7 @@ def test_permissoes(cenario):
     assert cenario.get(f"/api/solicitacoes/{sol['id']}").status_code == 404
     # colaborador não reenvia o que não está devolvido
     entrar(cenario, COLAB)
-    r = cenario.post(
-        f"/api/solicitacoes/{sol['id']}/reenviar",
-        data={"data_despesa": "2026-10-01", "valor": "1", "descricao": "x", "empresa_id": "1"},
-    )
+    r = reenviar(cenario, sol, [nota_despesa(arquivo=None, id=sol["despesas"][0]["id"])])
     assert r.status_code == 400
 
 
@@ -255,10 +285,11 @@ def test_validacoes_de_valor_e_data(cenario):
 
 
 def test_alerta_acima_do_limite(cenario):
-    assert criar(cenario, valor="135,00")["alerta_limite"] is None
-    sol = criar(cenario, valor="135,01")
+    """Thais, 15/10: alimentação até R$ 40 por dia (só alerta)."""
+    assert criar(cenario, valor="40,00")["alerta_limite"] is None
+    sol = criar(cenario, valor="40,01")
     assert sol["status"] == "em_conferencia"  # só alerta, não bloqueia
-    assert "135,00" in sol["alerta_limite"]
+    assert "R$ 40,00 por dia" in sol["alerta_limite"]
 
 
 def test_anexo_so_para_quem_ve(cenario):
@@ -341,7 +372,7 @@ def test_empresa_inativa_nao_aceita(cenario):
 
 
 # ---------------------------------------------------------------------------
-# Motivo e local da refeição (Thais, 09/10/2026)
+# Motivo (lista do ARGO) e reembolso de despesas com várias notas (Thais, 15/10)
 # ---------------------------------------------------------------------------
 def test_motivo_obrigatorio_e_da_lista(cenario):
     entrar(cenario, COLAB)
@@ -349,61 +380,95 @@ def test_motivo_obrigatorio_e_da_lista(cenario):
     assert "Escolha o motivo" in enviar(cenario, motivo="Churrasco").json()["detail"]
     sol = enviar(cenario, motivo="Reunião comercial").json()
     assert sol["motivo"] == "Reunião comercial"
+    assert sol["local_refeicao"] is None  # "Onde foi a refeição?" saiu
 
 
-def test_local_obrigatorio_e_da_lista(cenario):
+def test_varias_notas_com_categoria(cenario):
     entrar(cenario, COLAB)
-    assert "onde foi a refeição" in enviar(cenario, local_refeicao="").json()["detail"]
-    assert "onde foi a refeição" in enviar(cenario, local_refeicao="paris").json()["detail"]
+    ontem = (date.today() - timedelta(days=1)).isoformat()
+    notas = [
+        nota_despesa("30,00", ontem, "refeicao", 0),
+        nota_despesa("25,00", ontem, "taxi_uber", 1),
+        nota_despesa("38,00", None, "almoco_pinda", 2),
+    ]
+    arquivos = [
+        ("arquivos", ("a.jpg", JPG, "image/jpeg")),
+        ("arquivos", ("b.pdf", PDF, "application/pdf")),
+        ("arquivos", ("c.jpg", JPG, "image/jpeg")),
+    ]
+    r = enviar(cenario, notas=notas, arquivos=arquivos)
+    assert r.status_code == 201, r.text
+    sol = r.json()
+    assert sol["valor_total"] == "93.00" and len(sol["despesas"]) == 3
+    assert [d["categoria_rotulo"] for d in sol["despesas"]] == [
+        "Refeição - Nacional",
+        "Taxi ou Uber",
+        "Almoço em Pinda - Fora da planta",
+    ]
+    assert sol["alerta_limite"] is None  # refeição de cada dia ≤ R$ 40; Uber não conta
 
 
-@pytest.mark.parametrize(
-    ("local", "valor", "alerta"),
-    [
-        ("pinda", "40,00", None),
-        ("pinda", "40,01", "Pindamonhangaba (deslocamento local) (R$ 40,00)"),
-        ("maraba", "45,00", None),
-        ("maraba", "45,01", "Marabá (deslocamento local) (R$ 45,00)"),
-        ("outro", "135,00", None),
-        ("outro", "135,01", "(R$ 135,00)"),
-    ],
-)
-def test_limite_conforme_o_local(cenario, local, valor, alerta):
+def test_limite_de_r40_soma_as_refeicoes_do_dia(cenario):
     entrar(cenario, COLAB)
-    sol = enviar(cenario, local_refeicao=local, valor=valor).json()
-    assert sol["local_refeicao"] == local
-    if alerta is None:
-        assert sol["alerta_limite"] is None
-    else:
-        assert alerta in sol["alerta_limite"]
+    notas = [
+        nota_despesa("25,00", None, "refeicao", 0),
+        nota_despesa("20,00", None, "almoco_pinda", 1),
+    ]
+    arquivos = [
+        ("arquivos", ("a.jpg", JPG, "image/jpeg")),
+        ("arquivos", ("b.jpg", JPG, "image/jpeg")),
+    ]
+    sol = enviar(cenario, notas=notas, arquivos=arquivos).json()
+    assert "R$ 40,00 por dia" in sol["alerta_limite"]
+    # Hospedagem cara não é refeição: sem alerta.
+    assert enviar(cenario, valor="400,00", categoria="hospedagem").json()["alerta_limite"] is None
 
 
-def test_correcao_troca_local_e_motivo(cenario):
-    sol = criar(cenario, local_refeicao="pinda", valor="42,00")
-    assert sol["alerta_limite"]  # acima de R$ 40
-    assert sol["local_refeicao_rotulo"] == "Pindamonhangaba (deslocamento local)"
-    decidir(cenario, sol["id"], "conferir", THAIS, "financeiro", False, "Foi fora de Pinda")
+def test_categoria_obrigatoria_e_da_lista(cenario):
     entrar(cenario, COLAB)
-    r = cenario.post(
-        f"/api/solicitacoes/{sol['id']}/reenviar",
-        data={
-            "data_despesa": date.today().isoformat(),
-            "valor": "42,00",
-            "descricao": "Almoço com cliente",
-            "motivo": "Trabalho externo",
-            "local_refeicao": "outro",
-            "empresa_id": "1",
-            "gestor_email": GESTOR,
-        },
-    )
-    corpo = r.json()
+    for categoria in ("", "churrasco", "diversos"):
+        r = enviar(cenario, categoria=categoria)
+        assert r.status_code == 400 and "categoria inválida" in r.json()["detail"]
+
+
+def test_nota_sem_arquivo_e_recusada(cenario):
+    entrar(cenario, COLAB)
+    r = enviar(cenario, arquivo=None)
+    assert r.status_code == 400 and "anexe a foto" in r.json()["detail"]
+
+
+def test_correcao_adiciona_e_remove_notas(cenario):
+    sol = criar(cenario)
+    decidir(cenario, sol["id"], "conferir", THAIS, "financeiro", False, "Faltou o Uber")
+    entrar(cenario, COLAB)
+    notas = [
+        nota_despesa("45,90", arquivo=None, id=sol["despesas"][0]["id"]),
+        nota_despesa("18,00", None, "taxi_uber", 0),
+    ]
+    r = reenviar(cenario, sol, notas, [("arquivos", ("u.jpg", JPG, "image/jpeg"))])
     assert r.status_code == 200, r.text
-    assert corpo["local_refeicao"] == "outro" and corpo["motivo"] == "Trabalho externo"
-    assert corpo["alerta_limite"] is None
+    assert r.json()["valor_total"] == "63.90" and len(r.json()["despesas"]) == 2
+    decidir(cenario, sol["id"], "conferir", THAIS, "financeiro", False, "Só o Uber")
+    entrar(cenario, COLAB)
+    uber = r.json()["despesas"][1]["id"]
+    r = reenviar(cenario, sol, [nota_despesa("18,00", None, "taxi_uber", None, id=uber)])
+    assert r.json()["valor_total"] == "18.00" and len(r.json()["despesas"]) == 1
 
 
-def test_cadastros_trazem_motivos_e_locais(cenario):
+def test_pedido_antigo_de_uma_nota_ainda_pode_ser_corrigido(cenario, db):
+    """Pedidos de antes de 15/10 tinham o local da refeição: a correção limpa."""
+    sol = criar(cenario)
+    registro = db.get(Solicitacao, sol["id"])
+    registro.local_refeicao = "pinda"
+    db.commit()
+    decidir(cenario, sol["id"], "conferir", THAIS, "financeiro", False, "Corrigir")
+    entrar(cenario, COLAB)
+    r = reenviar(cenario, sol, [nota_despesa(arquivo=None, id=sol["despesas"][0]["id"])])
+    assert r.status_code == 200 and r.json()["local_refeicao"] is None
+
+
+def test_cadastros_trazem_motivos_e_limite(cenario):
     dados = cenario.get("/api/cadastros").json()
     assert dados["motivos"][0] == "Despesas cartório" and "Visita técnica" in dados["motivos"]
-    assert [loc["id"] for loc in dados["locais_refeicao"]] == ["pinda", "maraba", "outro"]
-    assert dados["locais_refeicao"][0]["limite"] == "40.00"
+    assert dados["limite_alimentacao_dia"] == "40.00"
+    assert "locais_refeicao" not in dados

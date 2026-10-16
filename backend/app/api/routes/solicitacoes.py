@@ -188,8 +188,6 @@ def _completo(sol: Solicitacao, usuario: Usuario) -> dict:
                 "categoria_rotulo": (
                     _ROTULO_COMPROVANTE
                     if d.categoria == fluxo.COMPROVANTE_DEVOLUCAO
-                    else "Refeição"
-                    if sol.tipo == fluxo.TIPO_ALIMENTACAO
                     else "Despesas diversas"
                     if sol.tipo == fluxo.TIPO_DIVERSAS
                     else CATEGORIAS_VIAGEM.get(d.categoria)
@@ -226,27 +224,20 @@ def _iso(valor) -> str | None:
 # Entrada de formulário (multipart, por causa do arquivo)
 # ---------------------------------------------------------------------------
 def _dados(
-    data_despesa: str,
-    valor: str,
     descricao: str,
     empresa_id: int,
     gestor_email: str | None,
-    motivo: str = "",
-    local: str = "",
+    motivo: str,
+    despesas: str,
     centro_custo_id: str = "",
-) -> fluxo.DadosAlimentacao:
-    try:
-        data = date.fromisoformat(data_despesa)
-    except ValueError:
-        raise RegraNegocio("Data da despesa inválida.") from None
-    return fluxo.DadosAlimentacao(
-        data_despesa=data,
-        valor=ler_valor(valor),
+) -> fluxo.DadosDespesas:
+    """Reembolso de despesas (alimentação ou diversas): notas como na viagem."""
+    return fluxo.DadosDespesas(
         descricao=descricao,
         empresa_id=empresa_id,
         gestor_email=(gestor_email or "").strip().lower() or None,
+        itens=_itens(despesas),
         motivo=motivo.strip(),
-        local=local.strip(),
         centro_custo_id=_centro_custo_form(centro_custo_id),
     )
 
@@ -340,85 +331,62 @@ def listar(
 
 @router.post("/alimentacao", status_code=201)
 async def criar_alimentacao(
-    data_despesa: str = Form(...),
-    valor: str = Form(...),
-    descricao: str = Form(...),
+    # Texto vazio chega como "campo ausente": o padrão "" deixa a mensagem
+    # de validação do fluxo (em português) aparecer em vez do 422 genérico.
+    descricao: str = Form(""),
     empresa_id: int = Form(...),
     gestor_email: str | None = Form(None),
     motivo: str = Form(""),
-    local_refeicao: str = Form(""),
+    despesas: str = Form(...),
+    centro_custo_id: str = Form(""),
     # Pedido em nome de outra pessoa (opcional; só o e-mail liga a opção).
     beneficiario_email: str = Form(""),
     beneficiario_nome: str = Form(""),
     beneficiario_matricula: str = Form(""),
-    centro_custo_id: str = Form(""),
-    arquivo: UploadFile | None = File(None),
+    arquivos: list[UploadFile] = File([]),
     usuario: Usuario = Depends(usuario_atual),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
     armazenamento: Armazenamento = Depends(get_armazenamento),
 ):
+    """Reembolso de despesas - alimentação: notas com categoria (Thais, 15/10)."""
     dados = replace(
-        _dados(
-            data_despesa,
-            valor,
-            descricao,
-            empresa_id,
-            gestor_email,
-            motivo,
-            local_refeicao,
-            centro_custo_id,
-        ),
+        _dados(descricao, empresa_id, gestor_email, motivo, despesas, centro_custo_id),
         beneficiario=_beneficiario(beneficiario_email, beneficiario_nome, beneficiario_matricula),
     )
-    return await _criar_uma_nota(
-        fluxo.TIPO_ALIMENTACAO, dados, arquivo, usuario, db, settings, armazenamento
+    validados = await _arquivos(arquivos)
+    sol = fluxo.criar_alimentacao(
+        db, settings, armazenamento, usuario, dados, validados, fluxo.TIPO_ALIMENTACAO
     )
+    return _completo(sol, usuario)
 
 
 @router.post("/diversas", status_code=201)
 async def criar_diversas(
-    data_despesa: str = Form(...),
-    valor: str = Form(...),
-    descricao: str = Form(...),
+    descricao: str = Form(""),
     empresa_id: int = Form(...),
     gestor_email: str | None = Form(None),
     motivo: str = Form(""),
+    despesas: str = Form(...),
+    centro_custo_id: str = Form(""),
     beneficiario_email: str = Form(""),
     beneficiario_nome: str = Form(""),
     beneficiario_matricula: str = Form(""),
-    centro_custo_id: str = Form(""),
-    arquivo: UploadFile | None = File(None),
+    arquivos: list[UploadFile] = File([]),
     usuario: Usuario = Depends(usuario_atual),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
     armazenamento: Armazenamento = Depends(get_armazenamento),
 ):
-    """Despesas diversas: mesmo formulário e fluxo da alimentação (corrige em /reenviar)."""
+    """Reembolso de despesas - diversas: notas sem categoria (corrige em /reenviar)."""
     dados = replace(
-        _dados(
-            data_despesa, valor, descricao, empresa_id, gestor_email, motivo, "", centro_custo_id
-        ),
+        _dados(descricao, empresa_id, gestor_email, motivo, despesas, centro_custo_id),
         beneficiario=_beneficiario(beneficiario_email, beneficiario_nome, beneficiario_matricula),
     )
-    return await _criar_uma_nota(
-        fluxo.TIPO_DIVERSAS, dados, arquivo, usuario, db, settings, armazenamento
+    validados = await _arquivos(arquivos)
+    sol = fluxo.criar_alimentacao(
+        db, settings, armazenamento, usuario, dados, validados, fluxo.TIPO_DIVERSAS
     )
-
-
-async def _criar_uma_nota(
-    tipo: str,
-    dados: fluxo.DadosAlimentacao,
-    arquivo: UploadFile | None,
-    usuario: Usuario,
-    db: Session,
-    settings: Settings,
-    armazenamento: Armazenamento,
-) -> dict:
-    validado = await _arquivo(arquivo)
-    if validado is None:
-        raise RegraNegocio("Anexe a foto ou o PDF da nota.")
-    sol = fluxo.criar_alimentacao(db, settings, armazenamento, usuario, dados, validado, tipo)
     return _completo(sol, usuario)
 
 
@@ -545,32 +513,21 @@ def pagar(
 @router.post("/{sol_id}/reenviar")
 async def reenviar(
     sol_id: int,
-    data_despesa: str = Form(...),
-    valor: str = Form(...),
-    descricao: str = Form(...),
+    descricao: str = Form(""),
     empresa_id: int = Form(...),
     gestor_email: str | None = Form(None),
     motivo: str = Form(""),
-    local_refeicao: str = Form(""),
+    despesas: str = Form(...),
     centro_custo_id: str = Form(""),
-    arquivo: UploadFile | None = File(None),
+    arquivos: list[UploadFile] = File([]),
     usuario: Usuario = Depends(usuario_atual),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
     armazenamento: Armazenamento = Depends(get_armazenamento),
 ):
-    dados = _dados(
-        data_despesa,
-        valor,
-        descricao,
-        empresa_id,
-        gestor_email,
-        motivo,
-        local_refeicao,
-        centro_custo_id,
-    )
-    validado = await _arquivo(arquivo)
-    sol = fluxo.reenviar(db, settings, armazenamento, usuario, sol_id, dados, validado)
+    dados = _dados(descricao, empresa_id, gestor_email, motivo, despesas, centro_custo_id)
+    validados = await _arquivos(arquivos)
+    sol = fluxo.reenviar(db, settings, armazenamento, usuario, sol_id, dados, validados)
     return _completo(sol, usuario)
 
 

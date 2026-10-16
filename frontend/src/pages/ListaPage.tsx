@@ -33,16 +33,13 @@ export default function ListaPage({ escopo, titulo, descricao, vazio }: Props) {
         {escopo === 'minhas' && (
           <div className={ui.botoes}>
             <Link to="/nova" className={ui.botao}>
-              + Reembolso de alimentação
+              + Reembolso de despesas
             </Link>
             <Link to="/nova/viagem" className={ui.botao}>
               + Reembolso de viagem
             </Link>
             <Link to="/nova/adiantamento" className={ui.botao}>
               + Adiantamento de viagem
-            </Link>
-            <Link to="/nova/diversas" className={ui.botao}>
-              + Despesas diversas
             </Link>
           </div>
         )}

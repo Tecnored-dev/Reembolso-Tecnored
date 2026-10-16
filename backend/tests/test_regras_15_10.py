@@ -5,7 +5,17 @@ novos dos status. A recusa do gestor está em test_alimentacao e test_adiantamen
 from __future__ import annotations
 
 from tests.test_adiantamento import criar_adiantamento
-from tests.test_alimentacao import COLAB, GESTOR, THAIS, criar, decidir, entrar, enviar
+from tests.test_alimentacao import (
+    COLAB,
+    GESTOR,
+    THAIS,
+    criar,
+    decidir,
+    entrar,
+    enviar,
+    nota_despesa,
+    reenviar,
+)
 from tests.test_alimentacao import cenario as cenario  # fixture reaproveitada
 
 
@@ -42,22 +52,13 @@ def test_correcao_pode_trocar_o_centro_de_custo(cenario):
     sol = criar(cenario)
     decidir(cenario, sol["id"], "conferir", THAIS, "financeiro", False, "Centro de custo errado")
     entrar(cenario, COLAB)
-    dados = {
-        "data_despesa": sol["despesas"][0]["data_despesa"],
-        "valor": "45,90",
-        "descricao": "Almoço com cliente",
-        "motivo": "Visita técnica",
-        "local_refeicao": "outro",
-        "empresa_id": "1",
-        "gestor_email": GESTOR,
-    }
-    url = f"/api/solicitacoes/{sol['id']}/reenviar"
+    notas = [nota_despesa(arquivo=None, id=sol["despesas"][0]["id"])]
     # Sem centro de custo: mantém o do pedido.
-    r = cenario.post(url, data=dados)
+    r = reenviar(cenario, sol, notas, centro_custo_id="")
     assert r.status_code == 200 and r.json()["centro_custo"] == "3350 - T.I / T.A"
     decidir(cenario, sol["id"], "conferir", THAIS, "financeiro", False, "De novo")
     entrar(cenario, COLAB)
-    r = cenario.post(url, data={**dados, "centro_custo_id": "2"})
+    r = reenviar(cenario, sol, notas, centro_custo_id="2")
     assert r.status_code == 200 and r.json()["centro_custo"] == "4110 - CONTROLADORIA"
 
 

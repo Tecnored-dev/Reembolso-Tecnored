@@ -120,6 +120,26 @@ describe('alertasViagem', () => {
   })
 })
 
+describe('alertasViagem na alimentação (R$ 40 por dia, refeição + almoço em Pinda)', () => {
+  const nota = (categoria: string, data: string, valor: string) => ({ categoria, data, valor })
+  const refeicao = ['refeicao', 'almoco_pinda']
+  it('soma refeição e almoço em Pinda do mesmo dia', () => {
+    const alertas = alertasViagem(
+      [nota('refeicao', '2026-10-05', '25,00'), nota('almoco_pinda', '2026-10-05', '20,00')],
+      40,
+      5000,
+      refeicao
+    )
+    expect(alertas).toHaveLength(1)
+    expect(alertas[0]).toMatch(/R\$\s40,00/)
+  })
+  it('Uber e hotel não contam como refeição', () => {
+    expect(
+      alertasViagem([nota('taxi_uber', '2026-10-05', '80,00')], 40, 5000, refeicao)
+    ).toEqual([])
+  })
+})
+
 describe('somarValores', () => {
   it('soma só os valores válidos', () => {
     expect(somarValores(['45,90', '1.000,10', '', 'x'])).toBeCloseTo(1046)

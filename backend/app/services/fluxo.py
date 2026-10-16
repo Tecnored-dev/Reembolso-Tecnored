@@ -53,7 +53,7 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 
@@ -68,9 +68,9 @@ from app.config import (
     DIAS_EXPIRACAO_DEVOLVIDO,
     DIAS_LEMBRETE_DEVOLVIDO,
     DIAS_LEMBRETE_PRESTACAO,
+    LIMITE_ALIMENTACAO_DIA,
     LIMITE_REFEICAO_DIA,
     LIMITE_SOLICITACAO,
-    LOCAIS_REFEICAO,
     MAX_DESPESAS_VIAGEM,
     MAX_DIARIAS,
     MOTIVOS,
@@ -100,9 +100,13 @@ ROTULO_TIPO = {
     TIPO_VIAGEM: "Viagem",
     TIPO_ADIANTAMENTO: "Adiantamento de viagem",
 }
-# Tipos com uma nota só, no formulário simples (data, valor, descrição, arquivo).
-TIPOS_UMA_NOTA = (TIPO_ALIMENTACAO, TIPO_DIVERSAS)
-CATEGORIA_UMA_NOTA = {TIPO_ALIMENTACAO: "refeicao", TIPO_DIVERSAS: "diversos"}
+# "Reembolso de despesas - Prestação de Contas" (Thais, 15/10): alimentação ou
+# despesas diversas, com uma ou mais notas. Na alimentação cada nota tem a
+# categoria (lista das notas de viagem); nas diversas, todas são `diversos`.
+TIPOS_DESPESAS = (TIPO_ALIMENTACAO, TIPO_DIVERSAS)
+CATEGORIA_DIVERSAS = "diversos"
+# Categorias que contam para o limite diário de refeição da alimentação (R$ 40).
+CATEGORIAS_REFEICAO_ALIMENTACAO = ("refeicao", "almoco_pinda")
 # Despesa especial do adiantamento: o comprovante da transferência da sobra.
 COMPROVANTE_DEVOLUCAO = "comprovante_devolucao"
 
@@ -179,16 +183,15 @@ class _Pessoa:
 
 
 @dataclass(frozen=True)
-class DadosAlimentacao:
-    data_despesa: date
-    valor: Decimal
+class DadosDespesas:
+    """Reembolso de despesas (alimentação ou diversas): uma ou mais notas."""
+
     descricao: str
     empresa_id: int
     gestor_email: str | None
+    itens: tuple[ItemViagem, ...]
     beneficiario: Beneficiario | None = None
     motivo: str = ""
-    # Só alimentação: chave de LOCAIS_REFEICAO (pinda, maraba, outro).
-    local: str = ""
     # Escolhido no pedido. Obrigatório ao criar; na correção, None mantém o atual.
     centro_custo_id: int | None = None
 
@@ -356,14 +359,18 @@ def criar_alimentacao(
     settings: Settings,
     armazenamento: Armazenamento,
     usuario: Usuario,
-    dados: DadosAlimentacao,
-    arquivo: arquivos.ArquivoValidado,
+    dados: DadosDespesas,
+    arquivos_enviados: list[arquivos.ArquivoValidado],
     tipo: str = TIPO_ALIMENTACAO,
 ) -> Solicitacao:
-    """Alimentação ou despesas diversas: uma nota, mesmo fluxo."""
-    if tipo not in TIPOS_UMA_NOTA:
+    """Reembolso de despesas - Prestação de Contas (Thais, 15/10): alimentação
+    ou despesas diversas, com uma ou mais notas, mesmo fluxo."""
+    if tipo not in TIPOS_DESPESAS:
         raise RegraNegocio("Tipo de solicitação inválido.")
+    dados = _normalizar_despesas(dados, tipo)
     pessoa = _pessoa_do_pedido(db, settings, usuario, dados.beneficiario)
+    # Na criação nenhuma nota existe ainda: qualquer `id` é recusado.
+    _validar_despesas(dados, tipo, arquivos_enviados, existentes=set())
 
     agora = agora_utc()
     pula_gestor = pessoa.eh_gestor
@@ -374,7 +381,6 @@ def criar_alimentacao(
             db, settings, pessoa.email, pessoa.criado_por_email, dados.gestor_email
         )
     )
-    _validar_basico(dados, tipo)
     empresa = _empresa(db, dados.empresa_id)
     centro = _centro_custo(db, dados.centro_custo_id)
 
@@ -393,9 +399,8 @@ def criar_alimentacao(
         pula_gestor=pula_gestor,
         descricao=dados.descricao.strip(),
         motivo=dados.motivo,
-        local_refeicao=dados.local if tipo == TIPO_ALIMENTACAO else None,
-        valor_total=dados.valor,
-        alerta_limite=_alerta(dados.valor, tipo, dados.local),
+        valor_total=_total(dados.itens),
+        alerta_limite=_alerta_despesas(dados.itens, tipo),
         enviado_em=agora,
         ultima_movimentacao_em=agora,
     )
@@ -403,9 +408,13 @@ def criar_alimentacao(
     db.flush()  # gera o id
     sol.codigo = f"REE-{sol.id:06d}"
 
-    chave = arquivos.salvar(armazenamento, arquivo, sol.codigo, agora)
+    salvas: list[str] = []
     try:
-        sol.despesas.append(_despesa(dados, arquivo, chave, agora, CATEGORIA_UMA_NOTA[tipo]))
+        for item in dados.itens:
+            arquivo = arquivos_enviados[item.arquivo or 0]
+            chave = arquivos.salvar(armazenamento, arquivo, sol.codigo, agora)
+            salvas.append(chave)
+            sol.despesas.append(_despesa_viagem(item, arquivo, chave, agora))
         _registrar(db, sol, "enviado", None, EM_CONFERENCIA, usuario, None, agora)
         _lembrar_centro_custo(db, usuario, centro)
         notificacoes.enfileirar(
@@ -420,7 +429,8 @@ def criar_alimentacao(
         db.commit()
     except Exception:
         db.rollback()
-        armazenamento.remover(chave)
+        for chave in salvas:
+            armazenamento.remover(chave)
         raise
     return sol
 
@@ -431,15 +441,20 @@ def reenviar(
     armazenamento: Armazenamento,
     usuario: Usuario,
     sol_id: int,
-    dados: DadosAlimentacao,
-    arquivo: arquivos.ArquivoValidado | None,
+    dados: DadosDespesas,
+    arquivos_enviados: list[arquivos.ArquivoValidado],
 ) -> Solicitacao:
+    """Correção de um reembolso de despesas devolvido. A lista de notas enviada
+    substitui a anterior (como na viagem): com `id` mantém, sem `id` é nova, e as
+    que não vierem saem. Vale também para pedidos antigos, de uma nota só."""
     sol = obter(db, usuario, sol_id)
     _exigir(eh_dono(sol, usuario), "Só quem pediu pode corrigir.")
     _exigir_status(sol, DEVOLVIDO)
-    if sol.tipo not in TIPOS_UMA_NOTA:
+    if sol.tipo not in TIPOS_DESPESAS:
         raise RegraNegocio("Esta solicitação não é de alimentação (nem de despesas diversas).")
-    _validar_basico(dados, sol.tipo)
+    dados = _normalizar_despesas(dados, sol.tipo)
+    atuais = {d.id: d for d in sol.despesas}
+    _validar_despesas(dados, sol.tipo, arquivos_enviados, existentes=set(atuais))
     if not sol.pula_gestor:
         gestor = _validar_gestor(
             db, settings, sol.solicitante_email, sol.criado_por_email, dados.gestor_email
@@ -449,42 +464,93 @@ def reenviar(
     if dados.centro_custo_id is not None:
         sol.centro_custo = _centro_custo(db, dados.centro_custo_id).rotulo
     sol.descricao = dados.descricao.strip()
-    sol.valor_total = dados.valor
     sol.motivo = dados.motivo
-    sol.local_refeicao = dados.local if sol.tipo == TIPO_ALIMENTACAO else None
-    sol.alerta_limite = _alerta(dados.valor, sol.tipo, dados.local)
+    sol.local_refeicao = None  # o local saiu do formulário (Thais, 15/10)
+    sol.valor_total = _total(dados.itens)
+    sol.alerta_limite = _alerta_despesas(dados.itens, sol.tipo)
 
     agora = agora_utc()
-    despesa = sol.despesas[0]
-    despesa.data_despesa, despesa.valor = dados.data_despesa, dados.valor
-    chave_antiga = None
-    if arquivo is not None:
-        chave_antiga = despesa.arquivo_chave
-        despesa.arquivo_chave = arquivos.salvar(armazenamento, arquivo, sol.codigo or "", agora)
-        despesa.arquivo_nome, despesa.arquivo_tipo = arquivo.nome, arquivo.tipo
-        despesa.arquivo_tamanho = len(arquivo.conteudo)
-
-    sol.motivo_devolucao = None
-    sol.devolvido_por = sol.devolvido_em = sol.lembrete_expiracao_em = None
-    _mudar(db, sol, EM_CONFERENCIA, "reenviado", usuario, None, agora)
-    notificacoes.enfileirar(
-        db,
-        settings,
-        sol,
-        notificacoes.emails_financeiro(db),
-        "Solicitação corrigida para conferir",
-        f"{usuario.nome} corrigiu e reenviou a solicitação.",
-    )
+    novas_chaves: list[str] = []
+    chaves_antigas: list[str] = []
     try:
+        _sincronizar_notas(
+            sol,
+            atuais,
+            dados.itens,
+            arquivos_enviados,
+            armazenamento,
+            agora,
+            novas_chaves,
+            chaves_antigas,
+        )
+        sol.motivo_devolucao = None
+        sol.devolvido_por = sol.devolvido_em = sol.lembrete_expiracao_em = None
+        _mudar(db, sol, EM_CONFERENCIA, "reenviado", usuario, None, agora)
+        notificacoes.enfileirar(
+            db,
+            settings,
+            sol,
+            notificacoes.emails_financeiro(db),
+            "Solicitação corrigida para conferir",
+            f"{usuario.nome} corrigiu e reenviou a solicitação.",
+        )
         db.commit()
     except Exception:
         db.rollback()
-        if arquivo is not None:
-            armazenamento.remover(despesa.arquivo_chave)
+        for chave in novas_chaves:
+            armazenamento.remover(chave)
         raise
-    if chave_antiga:
-        armazenamento.remover(chave_antiga)
+    for chave in chaves_antigas:
+        armazenamento.remover(chave)
     return sol
+
+
+def _normalizar_despesas(dados: DadosDespesas, tipo: str) -> DadosDespesas:
+    """Despesas diversas não têm categoria por nota: todas viram `diversos`."""
+    if tipo != TIPO_DIVERSAS:
+        return dados
+    return replace(
+        dados, itens=tuple(replace(i, categoria=CATEGORIA_DIVERSAS) for i in dados.itens)
+    )
+
+
+def _validar_despesas(
+    dados: DadosDespesas,
+    tipo: str,
+    arquivos_enviados: list[arquivos.ArquivoValidado],
+    existentes: set[int],
+) -> None:
+    if dados.motivo not in MOTIVOS:
+        raise RegraNegocio("Escolha o motivo da despesa.")
+    if not dados.descricao.strip():
+        raise RegraNegocio("Descreva a despesa.")
+    if len(dados.descricao) > 500:
+        raise RegraNegocio("Descrição muito longa (máximo 500 caracteres).")
+    categorias = CATEGORIAS_VIAGEM if tipo == TIPO_ALIMENTACAO else {CATEGORIA_DIVERSAS: ""}
+    _validar_itens(dados.itens, arquivos_enviados, existentes, categorias)
+
+
+def _alerta_despesas(itens: tuple[ItemViagem, ...], tipo: str) -> str | None:
+    """Só avisa (não bloqueia). Alimentação: refeição acima de R$ 40 no dia,
+    somando as notas do mesmo dia (Thais, 15/10). Os dois tipos: total acima
+    do limite por solicitação."""
+    alertas = []
+    if tipo == TIPO_ALIMENTACAO:
+        por_dia: dict[date, Decimal] = {}
+        for item in itens:
+            if item.categoria in CATEGORIAS_REFEICAO_ALIMENTACAO:
+                dia = item.data_despesa
+                por_dia[dia] = por_dia.get(dia, Decimal("0")) + item.valor
+        dias = sorted(d for d, v in por_dia.items() if v > LIMITE_ALIMENTACAO_DIA)
+        if dias:
+            lista = ", ".join(f"{d:%d/%m}" for d in dias)
+            alertas.append(
+                f"Refeição acima do limite da política ({moeda(LIMITE_ALIMENTACAO_DIA)} "
+                f"por dia) em {lista}."
+            )
+    if _total(itens) > LIMITE_SOLICITACAO:
+        alertas.append(f"Total acima do limite por solicitação ({moeda(LIMITE_SOLICITACAO)}).")
+    return " ".join(alertas) or None
 
 
 # ---------------------------------------------------------------------------
@@ -697,8 +763,9 @@ def _validar_itens(
     itens: tuple[ItemViagem, ...],
     arquivos_enviados: list[arquivos.ArquivoValidado],
     existentes: set[int],
+    categorias: dict[str, str] = CATEGORIAS_VIAGEM,
 ) -> None:
-    """Notas de viagem (reembolso ou prestação de contas do adiantamento)."""
+    """Notas: viagem, prestação de contas do adiantamento e reembolso de despesas."""
     hoje = date.today()
     if not itens:
         raise RegraNegocio("Inclua pelo menos uma nota.")
@@ -708,7 +775,7 @@ def _validar_itens(
     usados: set[int] = set()
     ids: set[int] = set()
     for n, item in enumerate(itens, start=1):
-        if item.categoria not in CATEGORIAS_VIAGEM:
+        if item.categoria not in categorias:
             raise RegraNegocio(f"Nota {n}: categoria inválida.")
         if item.data_despesa > hoje:
             raise RegraNegocio(f"Nota {n}: a data não pode ser no futuro.")
@@ -1594,19 +1661,6 @@ def _registrar(
     )
 
 
-def _validar_basico(dados: DadosAlimentacao, tipo: str = TIPO_ALIMENTACAO) -> None:
-    if dados.motivo not in MOTIVOS:
-        raise RegraNegocio("Escolha o motivo da despesa.")
-    if tipo == TIPO_ALIMENTACAO and dados.local not in LOCAIS_REFEICAO:
-        raise RegraNegocio("Escolha onde foi a refeição.")
-    if dados.data_despesa > date.today():
-        raise RegraNegocio("A data da despesa não pode ser no futuro.")
-    if not dados.descricao.strip():
-        raise RegraNegocio("Descreva a despesa.")
-    if len(dados.descricao) > 500:
-        raise RegraNegocio("Descrição muito longa (máximo 500 caracteres).")
-
-
 def _pessoa_do_pedido(
     db: Session, settings: Settings, usuario: Usuario, beneficiario: Beneficiario | None
 ) -> _Pessoa:
@@ -1698,39 +1752,6 @@ def _lembrar_centro_custo(db: Session, usuario: Usuario, centro: CentroCusto) ->
     cadastro = db.scalar(select(CadastroUsuario).where(CadastroUsuario.email == usuario.email))
     if cadastro is not None:
         cadastro.centro_custo_id = centro.id
-
-
-def _alerta(valor: Decimal, tipo: str = TIPO_ALIMENTACAO, local: str = "outro") -> str | None:
-    """Limite de refeição (só alimentação), conforme o local escolhido."""
-    if tipo != TIPO_ALIMENTACAO:
-        return None
-    rotulo, limite = LOCAIS_REFEICAO.get(local, LOCAIS_REFEICAO["outro"])
-    if valor > limite:
-        if local in ("pinda", "maraba"):
-            return (
-                f"Acima do limite diário de refeição da política para {rotulo} ({moeda(limite)})."
-            )
-        return f"Acima do limite diário de refeição da política ({moeda(limite)})."
-    return None
-
-
-def _despesa(
-    dados: DadosAlimentacao,
-    arquivo: arquivos.ArquivoValidado,
-    chave: str,
-    agora: datetime,
-    categoria: str = "refeicao",
-) -> Despesa:
-    return Despesa(
-        categoria=categoria,
-        data_despesa=dados.data_despesa,
-        valor=dados.valor,
-        arquivo_chave=chave,
-        arquivo_nome=arquivo.nome,
-        arquivo_tipo=arquivo.tipo,
-        arquivo_tamanho=len(arquivo.conteudo),
-        criado_em=agora,
-    )
 
 
 def _exigir(condicao: bool, mensagem: str) -> None:

@@ -20,6 +20,9 @@ from tests.test_alimentacao import (
     THAIS,
     decidir,
     entrar,
+    enviar,
+    nota_despesa,
+    reenviar,
 )
 from tests.test_alimentacao import cenario as cenario  # fixture reaproveitada
 
@@ -36,22 +39,12 @@ def com_perfil(cliente, email, nome, matricula, papeis=""):
 
 def alimentacao(cliente, quem=COLAB, papeis="", gestor=GESTOR, **benef):
     entrar(cliente, quem, papeis)
-    dados = {
-        "data_despesa": HOJE.isoformat(),
-        "valor": "40,00",
-        "descricao": "Almoço na visita",
-        "motivo": "Visita técnica",
-        "local_refeicao": "outro",
-        "empresa_id": "1",
-        "centro_custo_id": "1",
+    return enviar(
+        cliente,
+        valor="40,00",
+        gestor=gestor,
+        descricao="Almoço na visita",
         **{f"beneficiario_{k}": str(v) for k, v in benef.items()},
-    }
-    if gestor:
-        dados["gestor_email"] = gestor
-    return cliente.post(
-        "/api/solicitacoes/alimentacao",
-        data=dados,
-        files={"arquivo": ("nota.jpg", JPG, "image/jpeg")},
     )
 
 
@@ -116,18 +109,7 @@ def test_os_dois_veem_recebem_avisos_e_podem_corrigir(cenario, db):
         entrar(cenario, quem)
         assert cenario.get(f"/api/solicitacoes/{sol['id']}").json()["acoes"] == ["reenviar"]
     entrar(cenario, BENEF)
-    r = cenario.post(
-        f"/api/solicitacoes/{sol['id']}/reenviar",
-        data={
-            "data_despesa": HOJE.isoformat(),
-            "valor": "38,00",
-            "descricao": "Almoço na visita",
-            "motivo": "Visita técnica",
-            "local_refeicao": "outro",
-            "empresa_id": "1",
-            "gestor_email": GESTOR,
-        },
-    )
+    r = reenviar(cenario, sol, [nota_despesa("38,00", arquivo=None, id=sol["despesas"][0]["id"])])
     assert r.status_code == 200, r.text
     # a correção não muda quem recebe
     assert r.json()["solicitante_email"] == BENEF and r.json()["criado_por_email"] == COLAB

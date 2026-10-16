@@ -12,9 +12,9 @@ from app.auth.papeis import GESTOR
 from app.auth.sessoes import Usuario, agora_utc
 from app.config import (
     CATEGORIAS_VIAGEM,
+    LIMITE_ALIMENTACAO_DIA,
     LIMITE_REFEICAO_DIA,
     LIMITE_SOLICITACAO,
-    LOCAIS_REFEICAO,
     MAX_DIARIAS,
     MOTIVOS,
     VALOR_DIARIA,
@@ -108,10 +108,8 @@ def cadastros(usuario: Usuario = Depends(usuario_atual), db: Session = Depends(g
         "categorias_viagem": [{"id": k, "rotulo": v} for k, v in CATEGORIAS_VIAGEM.items()],
         "valor_diaria": str(VALOR_DIARIA),
         "motivos": MOTIVOS,
-        "locais_refeicao": [
-            {"id": chave, "rotulo": rotulo, "limite": str(limite)}
-            for chave, (rotulo, limite) in LOCAIS_REFEICAO.items()
-        ],
+        # Reembolso de despesas - alimentação: refeição por dia (Thais, 15/10)
+        "limite_alimentacao_dia": str(LIMITE_ALIMENTACAO_DIA),
         "max_diarias": MAX_DIARIAS,
     }
 

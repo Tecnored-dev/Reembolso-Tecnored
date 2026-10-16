@@ -296,11 +296,11 @@ def test_rotas_de_correcao_nao_se_misturam(cenario):
     r = cenario.post(
         f"/api/solicitacoes/{viagem['id']}/reenviar",
         data={
-            "data_despesa": ONTEM.isoformat(),
-            "valor": "10",
             "descricao": "x",
+            "motivo": "Visita técnica",
             "empresa_id": "1",
             "gestor_email": GESTOR,
+            "despesas": json.dumps([nota(arquivo=None, id=viagem["despesas"][0]["id"])]),
         },
     )
     assert r.status_code == 400 and "não é de alimentação" in r.json()["detail"]
@@ -325,9 +325,9 @@ def test_cadastros_trazem_categorias(cenario):
     assert dados["limite_solicitacao"] == "5000.00"
 
 
-def test_alimentacao_continua_com_categoria_refeicao(cenario):
+def test_alimentacao_usa_as_categorias_das_notas(cenario):
     entrar(cenario, COLAB, "", "Colab")
     sol = enviar_alimentacao(cenario).json()
     assert sol["tipo_rotulo"] == "Alimentação"
     assert sol["destino"] is None and sol["viagem_inicio"] is None
-    assert sol["despesas"][0]["categoria_rotulo"] == "Refeição"
+    assert sol["despesas"][0]["categoria_rotulo"] == "Refeição - Nacional"
