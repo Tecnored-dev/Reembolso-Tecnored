@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import date, timedelta
+from decimal import Decimal
 
 import pytest
 from sqlalchemy import select
@@ -22,11 +23,12 @@ from tests.test_alimentacao import (
     entrar,
 )
 from tests.test_alimentacao import cenario as cenario  # fixture reaproveitada
-from tests.test_viagem import TRES_ARQUIVOS, TRES_NOTAS, criar_viagem, nota
+from tests.test_viagem import TRES_ARQUIVOS, TRES_NOTAS, criar_viagem, nota, pedido_diaria
 
 HOJE = date.today()
 INICIO = HOJE - timedelta(days=4)
-FIM = HOJE - timedelta(days=2)  # 3 diárias: R$ 405,00
+FIM = HOJE - timedelta(days=2)
+VALOR = "405,00"  # o colaborador informa o valor (Thais, 15/10); sem cálculo por dia
 
 
 def pedido(gestor=GESTOR, **extra) -> dict:
@@ -36,6 +38,7 @@ def pedido(gestor=GESTOR, **extra) -> dict:
         "viagem_fim": FIM.isoformat(),
         "descricao": "Visita técnica à planta",
         "empresa_id": 1,
+        "valor": VALOR,
         **extra,
     }
     if gestor:
@@ -106,30 +109,33 @@ def test_contagem_de_diarias():
     assert calcular_diarias(date(2026, 9, 30), date(2026, 10, 1)) == 2
 
 
-def test_pedido_calcula_diarias_e_vai_para_o_gestor(cenario, db):
+def test_pedido_com_valor_informado_vai_para_o_gestor(cenario, db):
     sol = criar_adiantamento(cenario)
-    assert sol["tipo"] == "adiantamento" and sol["tipo_rotulo"] == "Adiantamento de viagem"
+    assert sol["tipo"] == "adiantamento" and sol["tipo_rotulo"] == "Adiantamento"
     assert sol["status"] == "aguardando_gestor"
-    assert sol["diarias"] == 3 and sol["valor_total"] == "405.00"
-    assert sol["valor_diaria"] == "135.00"
+    # Valor informado pelo colaborador, sem cálculo por dia (Thais, 15/10).
+    assert sol["valor_total"] == "405.00" and sol["diarias"] is None
+    assert sol["valor_complementar"] is None and sol["centro_custo"] is None
     assert sol["despesas"] == [] and sol["valor_gasto"] is None and sol["saldo"] is None
     assert sol["empresa"] == "TECNORED" and sol["destino"] == "Marabá - PA"
-    assert [n.para for n in avisos(db, sol["id"])] == [GESTOR]
+    aviso = avisos(db, sol["id"])[0]
+    assert aviso.para == GESTOR and "R$ 405,00" in aviso.corpo
 
 
-def test_valor_e_diarias_vem_do_servidor(cenario):
-    """O cliente não manda valor: mesmo que mande, quem calcula é o servidor."""
-    sol = criar_adiantamento(cenario, valor_total="99999", diarias=50)
-    assert sol["diarias"] == 3 and sol["valor_total"] == "405.00"
-
-
-def test_viagem_futura_pode_pedir(cenario):
+def test_valor_nao_depende_dos_dias_da_viagem(cenario):
     sol = criar_adiantamento(
         cenario,
+        valor="1.234,56",
         viagem_inicio=(HOJE + timedelta(days=10)).isoformat(),
-        viagem_fim=(HOJE + timedelta(days=11)).isoformat(),
+        viagem_fim=(HOJE + timedelta(days=30)).isoformat(),
     )
-    assert sol["diarias"] == 2 and sol["valor_total"] == "270.00"
+    assert sol["valor_total"] == "1234.56" and sol["diarias"] is None
+
+
+def test_viagem_internacional_pode_ter_adiantamento(cenario):
+    sol = criar_adiantamento(cenario, destino="Lisboa - Portugal", valor="6000,00")
+    assert sol["valor_total"] == "6000.00"
+    assert "Total acima do limite" in sol["alerta_limite"]
 
 
 @pytest.mark.parametrize(
@@ -138,7 +144,11 @@ def test_viagem_futura_pode_pedir(cenario):
         ({"destino": ""}, "Informe o destino"),
         ({"descricao": "  "}, "motivo da viagem"),
         ({"viagem_inicio": HOJE.isoformat(), "viagem_fim": INICIO.isoformat()}, "antes do início"),
-        ({"viagem_fim": (INICIO + timedelta(days=60)).isoformat()}, "máximo 60 diárias"),
+        ({"valor": ""}, "valor do adiantamento"),
+        ({"valor": "0"}, "maior que zero"),
+        ({"valor": "-10"}, "maior que zero"),
+        ({"valor": "abc"}, "Valor inválido"),
+        ({"valor": "9.999.999,00"}, "acima do máximo"),
         ({"empresa_id": 999}, "Empresa de débito inválida"),
         ({"gestor_email": "ninguem@tecnored.com.br"}, "Gestor não encontrado"),
         ({"gestor_email": COLAB}, "seu próprio aprovador"),
@@ -160,14 +170,6 @@ def test_perfil_obrigatorio(cenario):
     entrar(cenario, "novo@tecnored.com.br", "")
     r = cenario.post("/api/solicitacoes/adiantamento", json=pedido())
     assert r.status_code == 400 and "Complete seu perfil" in r.json()["detail"]
-
-
-def test_limite_maximo_de_diarias_aceito(cenario):
-    sol = criar_adiantamento(
-        cenario, viagem_fim=(INICIO + timedelta(days=59)).isoformat()
-    )  # 60 diárias = R$ 8.100,00
-    assert sol["diarias"] == 60 and sol["valor_total"] == "8100.00"
-    assert "Total acima do limite" in sol["alerta_limite"]
 
 
 def test_gestor_pedindo_vai_direto_para_pagamento(cenario, db):
@@ -216,13 +218,14 @@ def test_pedido_devolvido_antes_da_mudanca_ainda_pode_ser_corrigido(cenario, db)
     assert cenario.get(f"/api/solicitacoes/{sol['id']}").json()["acoes"] == ["reenviar"]
     novo_fim = (FIM - timedelta(days=1)).isoformat()
     r = cenario.post(
-        f"/api/solicitacoes/{sol['id']}/reenviar-adiantamento", json=pedido(viagem_fim=novo_fim)
+        f"/api/solicitacoes/{sol['id']}/reenviar-adiantamento",
+        json=pedido(viagem_fim=novo_fim, valor="270,00"),
     )
     assert r.status_code == 200, r.text
     corrigida = r.json()
     # Sem conferência no adiantamento: o reenvio volta para o gestor.
     assert corrigida["status"] == "aguardando_gestor"
-    assert corrigida["diarias"] == 2 and corrigida["valor_total"] == "270.00"
+    assert corrigida["valor_total"] == "270.00" and corrigida["diarias"] is None
     assert corrigida["motivo_devolucao"] is None
 
 
@@ -246,18 +249,9 @@ def test_rotas_de_outros_tipos_nao_servem_para_adiantamento(cenario, db):
     entrar(cenario, COLAB, "")
     r = cenario.post(
         f"/api/solicitacoes/{sol['id']}/reenviar-viagem",
-        data={
-            "destino": "X",
-            "viagem_inicio": INICIO.isoformat(),
-            "viagem_fim": FIM.isoformat(),
-            "descricao": "x",
-            "empresa_id": "1",
-            "gestor_email": GESTOR,
-            "despesas": json.dumps([nota(arquivo=0)]),
-        },
-        files=[("arquivos", ("n.jpg", JPG, "image/jpeg"))],
+        json=pedido_diaria(),
     )
-    assert r.status_code == 400 and "não é de viagem" in r.json()["detail"]
+    assert r.status_code == 400 and "não é de diária" in r.json()["detail"]
     viagem = criar_viagem(cenario)
     decidir(cenario, viagem["id"], "conferir", THAIS, "financeiro", False, "Corrigir")
     entrar(cenario, COLAB, "")
@@ -522,34 +516,17 @@ def test_cadastros_trazem_valor_da_diaria(cenario):
 # ---------------------------------------------------------------------------
 # Respostas da Thais (09/10/2026)
 # ---------------------------------------------------------------------------
-def test_diaria_complementar_soma_as_diarias_normais(cenario, db):
-    """Thais, 13/10: a complementar SOMA (não substitui)."""
-    sol = criar_adiantamento(cenario, diaria_complementar="250,00")
-    assert sol["diaria_complementar"] is True and sol["valor_complementar"] == "250.00"
-    assert sol["diarias"] == 3 and sol["valor_total"] == "655.00"  # 3 x 135 + 250
-    aviso = avisos(db, sol["id"])[0]
-    assert "3 diária(s) + diária complementar de R$ 250,00" in aviso.corpo
-
-
-def test_diaria_complementar_vazia_e_diaria_normal(cenario):
-    sol = criar_adiantamento(cenario, diaria_complementar="  ")
-    assert sol["diaria_complementar"] is False and sol["valor_total"] == "405.00"
-
-
-@pytest.mark.parametrize("valor", ["0", "-10", "abc"])
-def test_diaria_complementar_invalida(cenario, valor):
+def test_pedido_antigo_com_diaria_complementar_continua_legivel(cenario, db):
+    """Pedidos de antes de 15/10 guardam diárias e complementar; o detalhe mostra."""
+    sol = criar_adiantamento(cenario)
+    linha = db.get(Solicitacao, sol["id"])
+    linha.diarias, linha.valor_complementar = 3, Decimal("250.00")
+    linha.valor_total = Decimal("655.00")
+    db.commit()
     entrar(cenario, COLAB, "")
-    r = cenario.post("/api/solicitacoes/adiantamento", json=pedido(diaria_complementar=valor))
-    assert r.status_code == 400, r.text
-
-
-def test_correcao_troca_complementar_por_diarias_normais(cenario, db):
-    sol = criar_adiantamento(cenario, diaria_complementar="250,00")
-    devolvido_antigo(db, sol["id"])
-    entrar(cenario, COLAB, "")
-    r = cenario.post(f"/api/solicitacoes/{sol['id']}/reenviar-adiantamento", json=pedido())
-    assert r.json()["diaria_complementar"] is False and r.json()["valor_total"] == "405.00"
-    assert r.json()["valor_complementar"] is None
+    antigo = cenario.get(f"/api/solicitacoes/{sol['id']}").json()
+    assert antigo["diarias"] == 3 and antigo["valor_complementar"] == "250.00"
+    assert antigo["diaria_complementar"] is True and antigo["valor_total"] == "655.00"
 
 
 def test_prazo_da_prestacao_lembrete_e_vencimento(cenario, db, settings):

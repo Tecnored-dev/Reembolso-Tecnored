@@ -12,14 +12,14 @@ import { useApi } from '@/hooks/useApi'
 import { api } from '@/services/api'
 import ui from '@/styles/ui.module.css'
 import type { Cadastros, Gestor, Solicitacao } from '@/types'
-import { calcularDiarias, formatarMoeda, lerValor, mensagemErro } from '@/utils'
+import { formatarMoeda, lerValor, mensagemErro } from '@/utils'
 
-// Adiantamento de viagem: o colaborador pede ANTES de viajar e recebe as
-// diárias (valor da diária vezes os dias) e, se recebe auxílio refeição, a
-// diária complementar (valor que ele informa), que SOMA às diárias (Thais,
-// 13/10). O gestor aprova, o financeiro paga e, depois da viagem, o
-// colaborador presta contas com as notas.
-// Também serve para corrigir um pedido devolvido (/solicitacoes/:id/corrigir-adiantamento).
+// Adiantamento (Thais, 15/10): o colaborador pede ANTES de viajar e informa o
+// valor do adiantamento (sem cálculo por dia; viagem internacional também pode).
+// O gestor aprova, o financeiro paga e, depois da viagem, o colaborador presta
+// contas com as notas. Não tem centro de custo.
+// Também serve para corrigir um pedido devolvido antes de 15/10
+// (/solicitacoes/:id/corrigir-adiantamento).
 export default function AdiantamentoFormPage() {
   const { id } = useParams()
   const corrigindo = Boolean(id)
@@ -44,8 +44,7 @@ export default function AdiantamentoFormPage() {
   const [descricao, setDescricao] = useState('')
   const [empresa, setEmpresa] = useState('')
   const [gestor, setGestor] = useState('')
-  const [complementar, setComplementar] = useState(false)
-  const [valorComplementar, setValorComplementar] = useState('')
+  const [valorPedido, setValorPedido] = useState('')
   const [erro, setErro] = useState<string | null>(null)
   const [enviando, setEnviando] = useState(false)
 
@@ -74,20 +73,12 @@ export default function AdiantamentoFormPage() {
       setDescricao(s.descricao)
       setEmpresa(String(cadastros.empresas.find((e) => e.nome === s.empresa)?.id ?? ''))
       setGestor(s.gestor_email ?? '')
-      setComplementar(s.valor_complementar !== null)
-      setValorComplementar(
-        s.valor_complementar === null ? '' : Number(s.valor_complementar).toFixed(2).replace('.', ',')
-      )
+      setValorPedido(Number(s.valor_total).toFixed(2).replace('.', ','))
     })
   }, [id, cadastros])
 
-  const valorDiaria = Number(cadastros?.valor_diaria ?? 0)
-  const maxDiarias = cadastros?.max_diarias ?? 0
-  const diarias = calcularDiarias(inicio, fim)
-  const numeroComplementar = lerValor(valorComplementar)
-  const valorNormal = diarias * valorDiaria
-  const extra = complementar && !Number.isNaN(numeroComplementar) ? numeroComplementar : 0
-  const valor = valorNormal + extra
+  const numeroValor = lerValor(valorPedido)
+  const valor = Number.isNaN(numeroValor) ? 0 : numeroValor
   const limite = Number(cadastros?.limite_solicitacao ?? 0)
 
   async function enviar(e: FormEvent) {
@@ -100,7 +91,7 @@ export default function AdiantamentoFormPage() {
       descricao,
       empresa_id: Number(empresa),
       ...(pulaGestor ? {} : { gestor_email: gestor }),
-      ...(complementar ? { diaria_complementar: valorComplementar } : {}),
+      valor: valorPedido,
       ...(corrigindo ? {} : camposBeneficiario(benef)),
     }
     setEnviando(true)
@@ -132,7 +123,7 @@ export default function AdiantamentoFormPage() {
       <div className={ui.cabecalho}>
         <div>
           <h1 className={ui.titulo}>
-            {corrigindo ? `Corrigir ${original?.codigo ?? ''}` : 'Novo adiantamento de viagem'}
+            {corrigindo ? `Corrigir ${original?.codigo ?? ''}` : 'Adiantamento'}
           </h1>
           <p className={ui.muted}>
             {benef.ativo && benef.email.trim()
@@ -144,10 +135,7 @@ export default function AdiantamentoFormPage() {
 
       {!corrigindo && (
         <div className={ui.info} style={{ marginBottom: 16 }}>
-          Peça antes de viajar: você recebe as diárias adiantadas. Depois da viagem, faça a
-          prestação de contas com as notas (prazo de 60 dias depois da volta). Se sobrar, você
-          devolve; se faltar, recebe a diferença. Viagem internacional não tem adiantamento: peça
-          o reembolso de viagem depois, com as notas.
+          Atente-se aos limites estabelecidos em procedimento.
         </div>
       )}
 
@@ -188,58 +176,21 @@ export default function AdiantamentoFormPage() {
         </div>
 
         <div className={ui.campo}>
-          <label style={{ fontWeight: 400 }}>
-            <input
-              type="checkbox"
-              checked={complementar}
-              onChange={(e) => setComplementar(e.target.checked)}
-            />{' '}
-            Também pedir diária complementar — recebo auxílio refeição (trabalho 100% presencial
-            no escritório)
-          </label>
+          <label htmlFor="valorPedido">Valor do adiantamento (R$)</label>
+          <input
+            id="valorPedido"
+            inputMode="decimal"
+            placeholder="0,00"
+            value={valorPedido}
+            onChange={(e) => setValorPedido(e.target.value)}
+            required
+          />
+          <span className={ui.ajuda}>
+            Depois da viagem, você presta contas com as notas (prazo de 60 dias depois da volta).
+            Se sobrar, devolve; se faltar, recebe a diferença.
+          </span>
         </div>
-        {complementar && (
-          <div className={ui.campo}>
-            <label htmlFor="valorComplementar">Valor da diária complementar (R$)</label>
-            <input
-              id="valorComplementar"
-              inputMode="decimal"
-              placeholder="0,00"
-              value={valorComplementar}
-              onChange={(e) => setValorComplementar(e.target.value)}
-              required
-            />
-            <span className={ui.ajuda}>
-              Não tem valor fixo: informe o total da viagem. Ele é somado às diárias.
-            </span>
-          </div>
-        )}
-
-        <div className={ui.info} aria-live="polite">
-          {diarias === 0 ? (
-            'Informe a ida e a volta para calcular as diárias.'
-          ) : (
-            <>
-              <strong>
-                {diarias} diária{diarias > 1 ? 's' : ''} × {formatarMoeda(valorDiaria)} ={' '}
-                {formatarMoeda(valorNormal)}
-                {complementar && (
-                  <>
-                    {' '}
-                    + complementar {formatarMoeda(extra)} = {formatarMoeda(valor)}
-                  </>
-                )}
-              </strong>
-              <div className={ui.ajuda}>Conta o dia da ida e o da volta (fim de semana também).</div>
-            </>
-          )}
-        </div>
-        {maxDiarias > 0 && diarias > maxDiarias && (
-          <div className={ui.erro}>
-            Período longo demais ({diarias} dias). Confira as datas (máximo {maxDiarias} diárias).
-          </div>
-        )}
-        {limite > 0 && valor > limite && diarias <= maxDiarias && (
+        {limite > 0 && valor > limite && (
           <div className={ui.aviso}>
             Total acima do limite por solicitação ({formatarMoeda(limite)}). Você pode enviar mesmo
             assim — o gestor e o financeiro vão ver o alerta.
@@ -302,7 +253,7 @@ export default function AdiantamentoFormPage() {
         {erro && <div className={ui.erro}>{erro}</div>}
 
         <div className={ui.botoes}>
-          <button className={ui.botao} disabled={enviando || (maxDiarias > 0 && diarias > maxDiarias)}>
+          <button className={ui.botao} disabled={enviando}>
             {enviando ? 'Enviando…' : corrigindo ? 'Reenviar para o gestor' : 'Pedir adiantamento'}
           </button>
           <Link to={corrigindo ? `/solicitacoes/${id}` : '/inicio'} className={`${ui.botao} ${ui.secundario}`}>
