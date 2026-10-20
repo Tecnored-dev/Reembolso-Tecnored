@@ -231,3 +231,14 @@ def test_cookie_antigo_do_admin_nao_derruba_a_sessao_real(ligado):
     ver_como(ligado, FIN_TESTE)
     assert ligado.post("/api/teste/voltar").status_code == 200
     assert ligado.get("/api/session").json()["email"] == ADMIN
+
+
+def test_notas_da_demonstracao_tem_cupom_legivel():
+    """A foto da nota na demonstração é um cupom fictício, não um pixel em branco."""
+    from decimal import Decimal
+
+    for valor in ("38.50", "52.00", "89.90", "25.00", "31.00", "240.00"):
+        arq = painel._arquivo_nota(Decimal(valor))
+        assert arq.tipo == "image/png" and len(arq.conteudo) > 5000, valor
+    # valor sem imagem própria cai no PNG de reserva, sem quebrar a demonstração
+    assert painel._arquivo_nota(Decimal("1.23")).tipo == "image/png"
