@@ -157,6 +157,14 @@ class Settings:
     # Login de desenvolvimento (sem Microsoft) — SÓ com APP_ENV=local.
     dev_login_enabled: bool = field(default_factory=lambda: _bool("DEV_LOGIN_ENABLED"))
 
+    # Painel de teste ("Ver como"): só admin, só em local/hml. Deixa o admin
+    # trocar para usuários de teste (colaborador, gestor, financeiro) sem sair
+    # da própria conta Microsoft. Admin = grupo admin do Azure ou e-mail listado.
+    painel_teste_enabled: bool = field(default_factory=lambda: _bool("PAINEL_TESTE_ENABLED"))
+    painel_teste_admins: str = field(
+        default_factory=lambda: os.environ.get("PAINEL_TESTE_ADMINS", "")
+    )
+
     # Armazenamento dos arquivos das notas. "local" = pasta no volume /data.
     # S3 ou SharePoint entram quando a TI decidir (camada em app/storage).
     storage_backend: str = field(default_factory=lambda: os.environ.get("STORAGE_BACKEND", "local"))
@@ -166,6 +174,12 @@ class Settings:
 
     # Tarefas periódicas (expiração de devolvidas) rodando dentro da API.
     tarefas_automaticas: bool = field(default_factory=lambda: _bool("TAREFAS_AUTOMATICAS", "true"))
+
+    @property
+    def admins_painel_teste(self) -> frozenset[str]:
+        return frozenset(
+            e.strip().lower() for e in self.painel_teste_admins.split(",") if e.strip()
+        )
 
     @property
     def azure_configurado(self) -> bool:
@@ -179,6 +193,8 @@ class Settings:
             raise RuntimeError("DB_URL não configurado.")
         if self.dev_login_enabled and self.app_env != "local":
             raise RuntimeError("DEV_LOGIN_ENABLED só pode ser usado com APP_ENV=local.")
+        if self.painel_teste_enabled and self.app_env == "main":
+            raise RuntimeError("PAINEL_TESTE_ENABLED não pode ser usado com APP_ENV=main.")
 
 
 APP_VERSION = _ler("VERSION") or "0.0.0-dev"

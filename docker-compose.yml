@@ -33,6 +33,10 @@ services:
       - FRONTEND_URL=${FRONTEND_URL:-http://localhost:8080}
       # Só em LOCAL. A API se recusa a subir com isso ligado em hml/main.
       - DEV_LOGIN_ENABLED=${DEV_LOGIN_ENABLED:-false}
+      # Painel de teste ("Ver como"): só admin, só em local/hml; a API se recusa a
+      # subir com isso ligado na main. PAINEL_TESTE_ADMINS = e-mails separados por vírgula.
+      - PAINEL_TESTE_ENABLED=${PAINEL_TESTE_ENABLED:-false}
+      - PAINEL_TESTE_ADMINS=${PAINEL_TESTE_ADMINS:-}
       # Onde ficam os arquivos das notas: "local" (volume /data) por enquanto;
       # S3 ou SharePoint quando a TI decidir.
       - STORAGE_BACKEND=${STORAGE_BACKEND:-local}
