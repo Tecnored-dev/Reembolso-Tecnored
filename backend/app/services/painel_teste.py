@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import Decimal
+from pathlib import Path
 
 from sqlalchemy import delete, or_, select
 from sqlalchemy.orm import Session
@@ -129,11 +130,23 @@ def limpar(db: Session, armazenamento: Armazenamento) -> int:
 # ---------------------------------------------------------------------------
 # Dados de demonstração
 # ---------------------------------------------------------------------------
-# PNG 1x1 válido: serve de "foto da nota" nos pedidos de demonstração.
+# Cupons fiscais FICTÍCIOS (marcados "documento fictício") usados como foto da nota
+# na demonstração: um por valor, em app/assets/nota_demo_<valor>.png.
+_ASSETS = Path(__file__).resolve().parent.parent / "assets"
+
+# PNG 1x1 válido: só serve de reserva se a imagem do valor não existir.
 _PNG = bytes.fromhex(
     "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489"
     "0000000d49444154789c6360f8cfc00000030101009f5d63d00000000049454e44ae426082"
 )
+
+
+def _arquivo_nota(valor: Decimal) -> arquivos.ArquivoValidado:
+    """Foto da nota de demonstração para esse valor (cupom fictício legível)."""
+    caminho = _ASSETS / f"nota_demo_{valor:.2f}".replace(".", "_")
+    caminho = caminho.with_suffix(".png")
+    conteudo = caminho.read_bytes() if caminho.exists() else _PNG
+    return arquivos.validar(conteudo, "nota-demonstracao.png")
 
 
 def _nota(
@@ -158,7 +171,6 @@ def criar_demo(db: Session, settings: Settings, armazenamento: Armazenamento) ->
     centro = db.scalar(select(CentroCusto).where(CentroCusto.ativo).order_by(CentroCusto.codigo))
     if empresa is None or centro is None:
         raise RegraNegocio("Faltam empresa e centro de custo cadastrados.")
-    arquivo = arquivos.validar(_PNG, "nota-demo.png")
     emails = {"gestor": gestor.email}
     ini = date.today() + timedelta(days=7)
     fim = ini + timedelta(days=2)
@@ -178,7 +190,7 @@ def criar_demo(db: Session, settings: Settings, armazenamento: Armazenamento) ->
                 motivo=motivo,
                 centro_custo_id=centro.id,
             ),
-            [arquivo] * len(itens),  # cada nota tem o seu arquivo
+            [_arquivo_nota(i.valor) for i in itens],  # cada nota tem o seu cupom
             tipo=tipo,
         )
         criados.append(sol)
