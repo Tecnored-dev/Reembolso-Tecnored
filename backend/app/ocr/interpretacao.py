@@ -189,6 +189,14 @@ def _cnpj(linhas: list[str], chave: str | None, avisos: list[str]) -> tuple[Camp
 # ---------------------------------------------------------------------------
 _DATA = re.compile(r"(?<![\d/])(\d{2})[/.-](\d{2})[/.-](\d{4}|\d{2})(?![\d/])")
 _DATA_ISO = re.compile(r"(?<!\d)(\d{4})-(\d{2})-(\d{2})(?!\d)")
+_MESES = {
+    "JAN": 1, "FEV": 2, "MAR": 3, "ABR": 4, "MAI": 5, "JUN": 6,
+    "JUL": 7, "AGO": 8, "SET": 9, "OUT": 10, "NOV": 11, "DEZ": 12,
+}  # fmt: skip
+# "15 DE OUT. DE 2026", "15 de outubro de 2026", "15 OUT 2026" (cupom fiscal eletrônico)
+_DATA_EXTENSO = re.compile(
+    r"(?<!\d)(\d{1,2})\s+(?:DE\s+)?([A-Z]{3})[A-Z]*\.?\s+(?:DE\s+)?(\d{4})(?!\d)"
+)
 _LINHA_EMISSAO = re.compile(r"EMISSAO|EMITID")
 _LINHA_OUTRA_DATA = re.compile(r"VENCIMENTO|VALIDADE|VALIDO ATE|NASCIMENTO")
 
@@ -196,6 +204,9 @@ _LINHA_OUTRA_DATA = re.compile(r"VENCIMENTO|VALIDADE|VALIDO ATE|NASCIMENTO")
 def _datas_da_linha(linha: str, hoje: date) -> list[date]:
     encontradas = [(d, m, a) for d, m, a in _DATA.findall(linha)]
     encontradas += [(d, m, a) for a, m, d in _DATA_ISO.findall(linha)]
+    for dia, mes, ano in _DATA_EXTENSO.findall(_normalizar(linha)):
+        if mes in _MESES:
+            encontradas.append((dia, str(_MESES[mes]), ano))
     datas = []
     for dia, mes, ano in encontradas:
         ano_int = int(ano) + (2000 if len(ano) == 2 else 0)
