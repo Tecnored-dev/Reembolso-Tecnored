@@ -180,6 +180,15 @@ def test_formatos_de_data():
     assert ler(CABECALHO + "18/10/1999\n").data == Campo()  # ano fora do esperado
 
 
+def test_data_por_extenso_do_cupom_fiscal():
+    cupom = "15 DE OUT. DE 2026 12:26:23 - VIA CONSUMIDOR\n"
+    assert ler(CABECALHO + cupom).data.valor == "2026-10-15"
+    assert ler(CABECALHO + "3 de setembro de 2026\n").data.valor == "2026-09-03"
+    assert ler(CABECALHO + "15 OUT 2026\n").data.valor == "2026-10-15"
+    assert ler(CABECALHO + "31 DE FEV. DE 2026\n").data == Campo()  # não existe
+    assert ler(CABECALHO + "15 DE XYZ. DE 2026\n").data == Campo()  # mês inválido
+
+
 # ---------------------------------------------------------------------------
 # Valor
 # ---------------------------------------------------------------------------
