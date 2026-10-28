@@ -15,6 +15,22 @@ def moeda(valor: Decimal, codigo: str = "BRL") -> str:
     return f"{prefixo} {texto}"
 
 
+def ler_km(texto: str) -> Decimal:
+    """Km rodados: "120", "120,5" ou "1.250,5". Positivo, até 1 casa."""
+    bruto = (texto or "").strip().lower().replace("km", "").replace(" ", "")
+    if "," in bruto:
+        bruto = bruto.replace(".", "").replace(",", ".")
+    try:
+        km = Decimal(bruto)
+    except InvalidOperation:
+        raise RegraNegocio("Informe os km rodados.") from None
+    if not km.is_finite() or km <= 0:
+        raise RegraNegocio("Os km precisam ser maiores que zero.")
+    if km.as_tuple().exponent < -1:  # type: ignore[operator]
+        raise RegraNegocio("Use no máximo 1 casa decimal nos km.")
+    return km.quantize(Decimal("0.1"))
+
+
 def ler_valor(texto: str) -> Decimal:
     """Aceita "45,90", "45.90" e "1.234,56". Positivo, até 2 casas."""
     bruto = (texto or "").strip().replace("R$", "").replace(" ", "")

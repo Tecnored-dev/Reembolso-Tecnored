@@ -619,14 +619,14 @@ def test_financeiro_nao_confere_a_propria_prestacao_nem_devolucao(cenario):
 def test_categorias_novas_e_descricao_em_despesas_diversas(cenario):
     sol = adiantamento_pago(cenario)
     notas = [
-        nota("quilometragem", "120,00", arquivo=0, descricao="200 km"),
+        nota("estacionamento_pedagio", "120,00", arquivo=0, descricao="Pedágios"),
         nota("despesas_diversas", "10,00", arquivo=1, descricao="Cópias"),
     ]
     arquivos = [("a.jpg", JPG, "image/jpeg"), ("b.jpg", JPG, "image/jpeg")]
     r = prestar(cenario, sol["id"], notas, arquivos)
     assert r.status_code == 200, r.text
     rotulos = [d["categoria_rotulo"] for d in r.json()["despesas"]]
-    assert rotulos == ["Quilometragem com veículo próprio", "Despesas diversas"]
+    assert rotulos == ["Estacionamento e pedágios", "Despesas diversas"]
     # nome antigo não é mais aceito
     entrar(cenario, THAIS, "financeiro")
     decidir(cenario, sol["id"], "conferir", THAIS, "financeiro", False, "Teste")

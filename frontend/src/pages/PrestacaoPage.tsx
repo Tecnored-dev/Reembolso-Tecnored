@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
+import { useContexto } from '@/components/contexto'
 import NotasViagem from '@/components/NotasViagem'
 import { useApi } from '@/hooks/useApi'
 import { anexarNotas, conferirNotas, novaNota, notasEnviadas, type NotaForm } from '@/notas'
@@ -14,6 +15,7 @@ import { formatarData, formatarMoeda, hojeISO, mensagemErro, somarValores } from
 export default function PrestacaoPage() {
   const { id } = useParams()
   const navigate = useNavigate()
+  const { config } = useContexto()
   const { data: cadastros } = useApi<Cadastros>('/api/cadastros')
   const [sol, setSol] = useState<Solicitacao | null>(null)
   const [erroCarga, setErroCarga] = useState<string | null>(null)
@@ -109,7 +111,13 @@ export default function PrestacaoPage() {
           <div className={ui.aviso}>O prazo da prestação de contas já venceu. Envie as notas o quanto antes.</div>
         )}
 
-        <NotasViagem notas={notas} setNotas={setNotas} cadastros={cadastros} />
+        <NotasViagem
+          notas={notas}
+          setNotas={setNotas}
+          cadastros={cadastros}
+          semKm
+          lerComprovante={config.leitura_comprovante}
+        />
 
         <div className={ui.info} aria-live="polite">
           {diferenca > 0.004 && (

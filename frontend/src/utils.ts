@@ -33,6 +33,12 @@ export function formatarData(iso: string | null): string {
   return `${dia}/${mes}/${ano}`
 }
 
+/** "11222333000181" → "11.222.333/0001-81" (também o CNPJ alfanumérico). */
+export function formatarCnpj(cnpj: string): string {
+  if (cnpj.length !== 14) return cnpj
+  return `${cnpj.slice(0, 2)}.${cnpj.slice(2, 5)}.${cnpj.slice(5, 8)}/${cnpj.slice(8, 12)}-${cnpj.slice(12)}`
+}
+
 /** Datas da API vêm em UTC sem fuso ("2026-10-06T14:05:00"); mostra no horário local. */
 export function formatarDataHora(iso: string | null): string {
   if (!iso) return '—'

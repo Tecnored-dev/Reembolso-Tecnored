@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
+from app.api.routes.comprovantes import get_motor
 from app.auth.deps import usuario_atual
 from app.auth.papeis import papeis_publicos
 from app.auth.sessoes import Usuario
@@ -18,6 +19,7 @@ from app.config import (
     get_settings,
 )
 from app.db import banco_ok
+from app.ocr.motor import MotorOcr
 from app.storage import get_armazenamento
 
 router = APIRouter()
@@ -37,7 +39,7 @@ def health():
 
 
 @router.get("/api/config")
-def config(settings: Settings = Depends(get_settings)):
+def config(settings: Settings = Depends(get_settings), motor: MotorOcr = Depends(get_motor)):
     return {
         "title": APP_TITLE,
         "welcome_msg": APP_WELCOME_MESSAGE,
@@ -48,6 +50,8 @@ def config(settings: Settings = Depends(get_settings)):
         "commit_hash": APP_COMMIT_HASH,
         "login_microsoft": settings.azure_configurado,
         "login_dev": settings.dev_login_enabled and settings.app_env == "local",
+        # Leitura automática de comprovantes (POST /api/comprovantes/analisar).
+        "leitura_comprovante": motor.disponivel(),
     }
 
 

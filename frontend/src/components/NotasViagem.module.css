@@ -34,6 +34,32 @@
   }
 }
 
+.percurso {
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+}
+
+.percurso > div {
+  width: 100%;
+}
+
+.ponto {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ponto input {
+  flex: 1;
+}
+
+.resumoKm {
+  margin: 0;
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+}
+
 .remover {
   background: none;
   border: none;
@@ -136,4 +162,91 @@
   display: flex;
   gap: 10px;
   align-items: flex-start;
+}
+
+/* ----- Leitura automática do comprovante -------------------------------- */
+.leitura {
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-start;
+  margin: 0;
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--color-tecnored-primary-dark);
+}
+
+.leitura svg {
+  flex: none;
+  margin-top: 1px;
+}
+
+.leituraFalhou {
+  color: var(--color-warning);
+}
+
+.leituraDetalhe {
+  display: block;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--color-text-muted);
+  overflow-wrap: anywhere;
+}
+
+.leituraAviso {
+  color: var(--color-warning);
+}
+
+.girando {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  border: 2px solid var(--color-border);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: girar 0.8s linear infinite;
+}
+
+@keyframes girar {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .girando {
+    animation: none;
+  }
+}
+
+/* Selo ao lado do rótulo do campo preenchido pela leitura. */
+.selo {
+  display: inline-block;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--color-tecnored-bg-soft);
+  color: var(--color-tecnored-primary-dark);
+  font-size: 12px;
+  line-height: 20px;
+  font-weight: 600;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.seloConfira {
+  background: var(--color-warning-bg);
+  color: var(--color-warning);
+}
+
+/* Os :not() vencem a regra geral de `.campo input` do ui.module.css. */
+.nota select.campoLido,
+.nota input.campoLido:not([type='checkbox']):not([type='radio']) {
+  border-color: var(--color-tecnored-primary-light);
+  background-color: var(--color-tecnored-bg-mute);
+}
+
+.nota select.campoConfira,
+.nota input.campoConfira:not([type='checkbox']):not([type='radio']) {
+  border-color: var(--color-warning);
+  background-color: var(--color-warning-bg);
 }
