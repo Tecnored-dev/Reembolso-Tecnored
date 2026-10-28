@@ -200,8 +200,16 @@
     white-space: nowrap;
   }
 
+  /* O menu rola de lado com o dedo; a barra de rolagem fica escondida (o item
+     cortado na borda já mostra que há mais opções). */
   .menu {
     padding: 0 var(--space-2);
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .menu::-webkit-scrollbar {
+    display: none;
   }
 
   .conteudo {

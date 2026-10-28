@@ -155,7 +155,7 @@ export default function DetalhePage() {
     : sol?.despesas[0]
   useEffect(() => {
     setAnexoUrl(null)
-    if (!sol || !despesa) return
+    if (!sol || !despesa || !despesa.arquivo_tipo) return // quilometragem não tem arquivo
     let url: string | null = null
     api
       .get(`/api/solicitacoes/${sol.id}/despesas/${despesa.id}/arquivo`, { responseType: 'blob' })
@@ -276,7 +276,7 @@ export default function DetalhePage() {
               {sol.codigo} <StatusBadge status={sol.status} />
             </h1>
             <p className={ui.muted}>
-              {sol.tipo_rotulo} · enviada em {formatarDataHora(sol.enviado_em)} · {sol.status_rotulo}
+              {rotuloDoTipo(sol)} · enviada em {formatarDataHora(sol.enviado_em)} · {sol.status_rotulo}
             </p>
             {sol.criado_por_nome && (
               <p className={ui.muted}>
@@ -328,6 +328,26 @@ export default function DetalhePage() {
             <span>
               <strong>{comQuemEsta(sol.status, sol.gestor_nome).quem}.</strong>{' '}
               {comQuemEsta(sol.status, sol.gestor_nome).frase}
+            </span>
+          </div>
+        )}
+
+        {sol.status === 'pago' && !adiantamento && sol.data_pagamento && (
+          <div className={`${styles.agora} ${styles.agoraAprovado}`} aria-live="polite">
+            <span className={styles.agoraIc}>
+              <Icone nome="check" tamanho={22} />
+            </span>
+            <span>
+              {sol.data_pagamento > hojeISO() ? (
+                <>
+                  <strong>Aprovado! O pagamento será feito em {formatarData(sol.data_pagamento)}.</strong>{' '}
+                  Não precisa fazer mais nada, é só aguardar.
+                </>
+              ) : (
+                <>
+                  <strong>Pago em {formatarData(sol.data_pagamento)}.</strong> Nada a fazer.
+                </>
+              )}
             </span>
           </div>
         )}
@@ -684,7 +704,7 @@ export default function DetalhePage() {
                 )}
               </>
             )}
-            {sol.data_pagamento && (
+            {sol.data_pagamento && (adiantamento || sol.status !== 'pago') && (
               <div>
                 <dt>{adiantamento ? 'Adiantamento pago em' : 'Pago em'}</dt>
                 <dd>{formatarData(sol.data_pagamento)}</dd>
@@ -715,8 +735,22 @@ export default function DetalhePage() {
                 {formatarMoeda(despesa.valor, sol.moeda)}
               </p>
             )}
-            {despesa && !anexoUrl && <p className={ui.muted}>Carregando a nota…</p>}
-            {anexoUrl && despesa?.arquivo_tipo.startsWith('image/') && (
+            {despesa?.km && despesa.percurso && (
+              <div>
+                <p>
+                  <strong>{Number(despesa.km).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} km</strong> ·{' '}
+                  {formatarMoeda(despesa.valor, sol.moeda)}
+                </p>
+                <ol className={styles.percurso}>
+                  {despesa.percurso.map((ponto, i) => (
+                    <li key={i}>{ponto}</li>
+                  ))}
+                </ol>
+                <p className={ui.muted}>Quilometragem não tem comprovante.</p>
+              </div>
+            )}
+            {despesa && despesa.arquivo_tipo && !anexoUrl && <p className={ui.muted}>Carregando a nota…</p>}
+            {anexoUrl && despesa?.arquivo_tipo?.startsWith('image/') && (
               <a href={anexoUrl} target="_blank" rel="noreferrer">
                 <img src={anexoUrl} alt={`Nota ${sol.codigo}`} className={styles.nota} />
               </a>
@@ -829,6 +863,16 @@ export default function DetalhePage() {
 }
 
 /** "sobra de R$ X (o colaborador devolve)" etc., a partir do saldo da API. */
+// Categorias de refeição: sem nenhuma delas, o reembolso não é "de alimentação"
+// (ex.: só quilometragem ou Uber), mesmo tendo sido enviado pelo formulário de alimentação.
+const CATEGORIAS_REFEICAO = ['refeicao', 'refeicao_internacional', 'almoco_pinda']
+
+function rotuloDoTipo(sol: Solicitacao): string {
+  if (sol.tipo === 'alimentacao' && !sol.despesas.some((d) => CATEGORIAS_REFEICAO.includes(d.categoria)))
+    return 'Reembolso de despesas'
+  return sol.tipo_rotulo
+}
+
 function resumoSaldo(saldo: number | null, passado = false): string {
   if (saldo === null) return ''
   if (saldo > 0)

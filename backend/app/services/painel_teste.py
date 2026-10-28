@@ -118,7 +118,8 @@ def limpar(db: Session, armazenamento: Armazenamento) -> int:
     ids = [s.id for s in sols]
     for sol in sols:
         for despesa in sol.despesas:
-            armazenamento.remover(despesa.arquivo_chave)
+            if despesa.arquivo_chave:
+                armazenamento.remover(despesa.arquivo_chave)
     if ids:
         db.execute(delete(Notificacao).where(Notificacao.solicitacao_id.in_(ids)))
         for sol in sols:

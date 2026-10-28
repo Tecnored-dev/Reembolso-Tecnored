@@ -12,12 +12,15 @@ from app.auth.papeis import GESTOR
 from app.auth.sessoes import Usuario, agora_utc
 from app.config import (
     CATEGORIAS_VIAGEM,
+    KM_MAXIMO,
     LIMITE_ALIMENTACAO_DIA,
     LIMITE_REFEICAO_DIA,
     LIMITE_SOLICITACAO,
     MAX_DIARIAS,
+    MAX_PONTOS_PERCURSO,
     MOTIVOS,
     VALOR_DIARIA,
+    VALOR_KM,
     Settings,
     get_settings,
 )
@@ -107,6 +110,10 @@ def cadastros(usuario: Usuario = Depends(usuario_atual), db: Session = Depends(g
         "limite_solicitacao": str(LIMITE_SOLICITACAO),
         "categorias_viagem": [{"id": k, "rotulo": v} for k, v in CATEGORIAS_VIAGEM.items()],
         "valor_diaria": str(VALOR_DIARIA),
+        # Quilometragem (Thais, 22/10): valor por km e limite de km por nota.
+        "valor_km": str(VALOR_KM),
+        "km_maximo": str(KM_MAXIMO),
+        "max_pontos_percurso": MAX_PONTOS_PERCURSO,
         "motivos": MOTIVOS,
         # Reembolso de despesas - alimentação: refeição por dia (Thais, 15/10)
         "limite_alimentacao_dia": str(LIMITE_ALIMENTACAO_DIA),

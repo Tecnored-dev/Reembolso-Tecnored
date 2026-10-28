@@ -17,6 +17,7 @@ from app.auth.papeis import ADMIN
 from app.auth.sessoes import Usuario
 from app.config import (
     ARQUIVO_TAMANHO_MAX,
+    CATEGORIA_KM,
     CATEGORIAS_ANTIGAS,
     CATEGORIAS_VIAGEM,
     LOCAIS_REFEICAO,
@@ -29,7 +30,7 @@ from app.models.solicitacao import Solicitacao
 from app.services import arquivos as servico_arquivos
 from app.services import fluxo
 from app.services.erros import NaoEncontrado, RegraNegocio
-from app.services.formatos import ler_valor
+from app.services.formatos import ler_km, ler_valor
 from app.storage import Armazenamento, ArquivoNaoEncontrado, get_armazenamento
 
 router = APIRouter(prefix="/api/solicitacoes", tags=["solicitacoes"])
@@ -50,9 +51,14 @@ class NotaViagem(BaseModel):
     id: int | None = None
     categoria: str = Field(max_length=40)
     data_despesa: date
-    valor: str = Field(max_length=20)
+    # Vazio na quilometragem (o valor é calculado pelo servidor); nas outras notas,
+    # vazio vira "Valor inválido".
+    valor: str = Field(default="", max_length=20)
     descricao: str = Field(default="", max_length=200)
     arquivo: int | None = None  # posição em `arquivos`
+    # Só na quilometragem: o valor é calculado (km x valor por km) e `valor` é ignorado.
+    km: str = Field(default="", max_length=12)
+    percurso: list[str] = Field(default_factory=list, max_length=20)
 
 
 _NOTAS = TypeAdapter(list[NotaViagem])
@@ -257,6 +263,8 @@ def _completo(sol: Solicitacao, usuario: Usuario) -> dict:
                 "descricao": d.descricao,
                 "arquivo_nome": d.arquivo_nome,
                 "arquivo_tipo": d.arquivo_tipo,
+                "km": str(d.km) if d.km is not None else None,
+                "percurso": json.loads(d.percurso) if d.percurso else None,
             }
             for d in sol.despesas
         ],
@@ -308,15 +316,20 @@ async def _arquivo(upload: UploadFile | None) -> servico_arquivos.ArquivoValidad
     return servico_arquivos.validar(conteudo, upload.filename)
 
 
-def _itens(despesas: str) -> tuple[fluxo.ItemViagem, ...]:
+def _itens(despesas: str, com_km: bool = True) -> tuple[fluxo.ItemViagem, ...]:
     try:
         notas = _NOTAS.validate_python(json.loads(despesas or "[]"))
     except (ValueError, ValidationError):
         raise RegraNegocio("Lista de notas inválida.") from None
     itens = []
     for n, nota in enumerate(notas, start=1):
+        km = None
         try:
-            valor = ler_valor(nota.valor)
+            if nota.categoria == CATEGORIA_KM and com_km:
+                km = ler_km(nota.km)
+                valor = fluxo.valor_km(km)
+            else:
+                valor = ler_valor(nota.valor)
         except RegraNegocio as erro:
             raise RegraNegocio(f"Nota {n}: {erro}") from None
         itens.append(
@@ -327,6 +340,8 @@ def _itens(despesas: str) -> tuple[fluxo.ItemViagem, ...]:
                 descricao=nota.descricao,
                 arquivo=nota.arquivo,
                 id=nota.id,
+                km=km,
+                percurso=tuple(nota.percurso),
             )
         )
     return tuple(itens)
@@ -456,13 +471,13 @@ def baixar_arquivo(
 ):
     sol = fluxo.obter(db, usuario, sol_id)
     despesa = next((d for d in sol.despesas if d.id == despesa_id), None)
-    if despesa is None:
+    if despesa is None or not despesa.arquivo_chave:  # quilometragem não tem arquivo
         raise NaoEncontrado()
     try:
         conteudo = armazenamento.abrir(despesa.arquivo_chave)
     except ArquivoNaoEncontrado:
         raise NaoEncontrado() from None
-    nome = despesa.arquivo_nome.replace('"', "")
+    nome = (despesa.arquivo_nome or "nota").replace('"', "")
     return Response(
         conteudo,
         media_type=despesa.arquivo_tipo,
@@ -565,7 +580,7 @@ async def prestar_contas(
     settings: Settings = Depends(get_settings),
     armazenamento: Armazenamento = Depends(get_armazenamento),
 ):
-    itens = _itens(despesas)
+    itens = _itens(despesas, com_km=False)  # sem quilometragem na prestação
     validados = await _arquivos(arquivos)
     sol = fluxo.enviar_prestacao(db, settings, armazenamento, usuario, sol_id, itens, validados)
     return _completo(sol, usuario)

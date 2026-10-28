@@ -51,6 +51,7 @@ lembrete antes e aviso quando vence (não bloqueia: o dinheiro já foi pago).
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from dataclasses import dataclass, replace
@@ -64,19 +65,24 @@ from app.auth.papeis import ADMIN, FINANCEIRO, GESTOR
 from app.auth.sessoes import Usuario, agora_utc
 from app.config import (
     CATEGORIA_DESCRICAO_OBRIGATORIA,
+    CATEGORIA_KM,
+    CATEGORIAS_PRESTACAO,
     CATEGORIAS_VIAGEM,
     DIAS_EXPIRACAO_DEVOLVIDO,
     DIAS_LEMBRETE_DEVOLVIDO,
     DIAS_LEMBRETE_PRESTACAO,
+    KM_MAXIMO,
     LIMITE_ALIMENTACAO_DIA,
     LIMITE_REFEICAO_DIA,
     LIMITE_SOLICITACAO,
     MAX_DESPESAS_VIAGEM,
     MAX_DIARIAS,
     MAX_LINHAS_DIARIA,
+    MAX_PONTOS_PERCURSO,
     MOTIVOS,
     PRAZO_PRESTACAO_DIAS,
     VALOR_DIARIA,
+    VALOR_KM,
     Settings,
 )
 from app.models.cadastros import CentroCusto, Empresa
@@ -217,6 +223,10 @@ class ItemViagem:
     descricao: str
     arquivo: int | None = None
     id: int | None = None
+    # Só na quilometragem: km informados e percurso (origem, paradas, destino).
+    # O `valor` da nota é sempre km x valor por km (ver `valor_km`).
+    km: Decimal | None = None
+    percurso: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -432,9 +442,13 @@ def criar_alimentacao(
     salvas: list[str] = []
     try:
         for item in dados.itens:
-            arquivo = arquivos_enviados[item.arquivo or 0]
-            chave = arquivos.salvar(armazenamento, arquivo, sol.codigo, agora)
-            salvas.append(chave)
+            arquivo = (
+                None if item.categoria == CATEGORIA_KM else arquivos_enviados[item.arquivo or 0]
+            )
+            chave = None
+            if arquivo is not None:
+                chave = arquivos.salvar(armazenamento, arquivo, sol.codigo, agora)
+                salvas.append(chave)
             sol.despesas.append(_despesa_viagem(item, arquivo, chave, agora))
         _registrar(db, sol, "enviado", None, EM_CONFERENCIA, usuario, None, agora)
         _lembrar_centro_custo(db, usuario, centro)
@@ -773,7 +787,8 @@ def _sincronizar_notas(
     mantidas = {item.id for item in itens if item.id is not None}
     for despesa_id, despesa in atuais.items():
         if despesa_id not in mantidas:
-            chaves_antigas.append(despesa.arquivo_chave)
+            if despesa.arquivo_chave:
+                chaves_antigas.append(despesa.arquivo_chave)
             sol.despesas.remove(despesa)
     for item in itens:
         arquivo = arquivos_enviados[item.arquivo] if item.arquivo is not None else None
@@ -782,17 +797,26 @@ def _sincronizar_notas(
             chave = arquivos.salvar(armazenamento, arquivo, sol.codigo or "", agora)
             novas_chaves.append(chave)
         if item.id is None:
-            assert arquivo is not None and chave is not None  # garantido na validação
             sol.despesas.append(_despesa_viagem(item, arquivo, chave, agora))
             continue
         despesa = atuais[item.id]
         despesa.categoria, despesa.data_despesa = item.categoria, item.data_despesa
         despesa.valor, despesa.descricao = item.valor, item.descricao.strip() or None
+        despesa.km = item.km
+        despesa.percurso = _percurso_json(item)
         if arquivo is not None and chave is not None:
-            chaves_antigas.append(despesa.arquivo_chave)
+            if despesa.arquivo_chave:
+                chaves_antigas.append(despesa.arquivo_chave)
             despesa.arquivo_chave = chave
             despesa.arquivo_nome, despesa.arquivo_tipo = arquivo.nome, arquivo.tipo
             despesa.arquivo_tamanho = len(arquivo.conteudo)
+        elif item.categoria == CATEGORIA_KM:  # quilometragem não tem comprovante
+            if despesa.arquivo_chave:
+                chaves_antigas.append(despesa.arquivo_chave)
+            despesa.arquivo_chave = despesa.arquivo_nome = despesa.arquivo_tipo = None
+            despesa.arquivo_tamanho = None
+        elif despesa.arquivo_chave is None:  # deixou de ser quilometragem: precisa de nota
+            raise RegraNegocio("Anexe a foto ou o PDF da nota que deixou de ser quilometragem.")
 
 
 def _validar_itens(
@@ -824,12 +848,51 @@ def _validar_itens(
             if item.id not in existentes or item.id in ids:
                 raise RegraNegocio(f"Nota {n}: nota inválida.")
             ids.add(item.id)
-        elif item.arquivo is None:
+        elif item.arquivo is None and item.categoria != CATEGORIA_KM:
             raise RegraNegocio(f"Nota {n}: anexe a foto ou o PDF.")
+        _validar_km(n, item)
         if item.arquivo is not None:
             if not 0 <= item.arquivo < len(arquivos_enviados) or item.arquivo in usados:
                 raise RegraNegocio(f"Nota {n}: arquivo inválido.")
             usados.add(item.arquivo)
+
+
+def valor_km(km: Decimal) -> Decimal:
+    """Valor da nota de quilometragem: km x valor por km (Thais, 22/10)."""
+    return (km * VALOR_KM).quantize(Decimal("0.01"))
+
+
+def _validar_km(n: int, item: ItemViagem) -> None:
+    """Quilometragem: km, percurso e descrição, sem comprovante. As outras notas
+    não podem trazer km nem percurso."""
+    if item.categoria != CATEGORIA_KM:
+        if item.km is not None or item.percurso:
+            raise RegraNegocio(f"Nota {n}: km e percurso só valem para quilometragem.")
+        return
+    if item.arquivo is not None:
+        raise RegraNegocio(f"Nota {n}: quilometragem não leva comprovante.")
+    if not item.descricao.strip():
+        raise RegraNegocio(f"Nota {n}: descreva a quilometragem.")
+    pontos = [p.strip() for p in item.percurso]
+    if not 2 <= len(pontos) <= MAX_PONTOS_PERCURSO or not all(pontos):
+        raise RegraNegocio(f"Nota {n}: informe a origem, o destino e as paradas (se houver).")
+    if any(len(p) > 200 for p in pontos):
+        raise RegraNegocio(f"Nota {n}: endereço muito longo (máximo 200 caracteres).")
+    km = item.km
+    if km is None or not km.is_finite() or km <= 0:
+        raise RegraNegocio(f"Nota {n}: informe os km rodados.")
+    if km > KM_MAXIMO:
+        raise RegraNegocio(f"Nota {n}: máximo de {KM_MAXIMO:.0f} km por nota.")
+    if km.as_tuple().exponent < -1:  # type: ignore[operator]
+        raise RegraNegocio(f"Nota {n}: use no máximo 1 casa decimal nos km.")
+    if item.valor != valor_km(km):
+        raise RegraNegocio(f"Nota {n}: o valor da quilometragem é km x valor por km.")
+
+
+def _percurso_json(item: ItemViagem) -> str | None:
+    if item.categoria != CATEGORIA_KM:
+        return None
+    return json.dumps([p.strip() for p in item.percurso], ensure_ascii=False)
 
 
 def _total(itens: tuple[ItemViagem, ...]) -> Decimal:
@@ -857,7 +920,10 @@ def _alerta_viagem(itens: tuple[ItemViagem, ...]) -> str | None:
 
 
 def _despesa_viagem(
-    item: ItemViagem, arquivo: arquivos.ArquivoValidado, chave: str, agora: datetime
+    item: ItemViagem,
+    arquivo: arquivos.ArquivoValidado | None,
+    chave: str | None,
+    agora: datetime,
 ) -> Despesa:
     return Despesa(
         categoria=item.categoria,
@@ -865,9 +931,11 @@ def _despesa_viagem(
         valor=item.valor,
         descricao=item.descricao.strip() or None,
         arquivo_chave=chave,
-        arquivo_nome=arquivo.nome,
-        arquivo_tipo=arquivo.tipo,
-        arquivo_tamanho=len(arquivo.conteudo),
+        arquivo_nome=arquivo.nome if arquivo else None,
+        arquivo_tipo=arquivo.tipo if arquivo else None,
+        arquivo_tamanho=len(arquivo.conteudo) if arquivo else None,
+        km=item.km,
+        percurso=_percurso_json(item),
         criado_em=agora,
     )
 
@@ -989,7 +1057,9 @@ def enviar_prestacao(
     if sol.status not in (AGUARDANDO_PRESTACAO, PRESTACAO_DEVOLVIDA):
         _exigir_status(sol, AGUARDANDO_PRESTACAO)
     atuais = {d.id: d for d in sol.despesas if d.categoria != COMPROVANTE_DEVOLUCAO}
-    _validar_itens(itens, arquivos_enviados, existentes=set(atuais))
+    _validar_itens(
+        itens, arquivos_enviados, existentes=set(atuais), categorias=CATEGORIAS_PRESTACAO
+    )
 
     agora = agora_utc()
     primeira = sol.status == AGUARDANDO_PRESTACAO
