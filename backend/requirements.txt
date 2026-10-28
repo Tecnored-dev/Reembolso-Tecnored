@@ -9,5 +9,5 @@ python-multipart==0.0.32
 # OCR dos comprovantes (sugestão de preenchimento). O binário do Tesseract
 # (tesseract-ocr + tesseract-ocr-por) vem do apt no Dockerfile.
 pytesseract==0.3.13
-Pillow==12.3.0
+Pillow==13.0.0
 pypdfium2==5.14.0
