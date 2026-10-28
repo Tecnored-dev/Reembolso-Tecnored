@@ -117,6 +117,16 @@ KM_MAXIMO = Decimal("2000")  # por nota: trava contra erro de digitação
 MAX_PONTOS_PERCURSO = 8  # origem + paradas + destino
 # Tipos aceitos na prestação de contas do adiantamento (sem quilometragem).
 CATEGORIAS_PRESTACAO = {k: v for k, v in CATEGORIAS_VIAGEM.items() if k != CATEGORIA_KM}
+# Categorias por tipo de reembolso de despesas (pedido do Rizzo, 29/10): na
+# alimentação a nota é só refeição (nacional, internacional e almoço em Pinda; o
+# limite diário só conta a nacional e o almoço em Pinda); em despesas diversas,
+# que é o tipo misto, a categoria é obrigatória e vem o resto da lista.
+CATEGORIAS_ALIMENTACAO = {
+    k: CATEGORIAS_VIAGEM[k] for k in ("refeicao", "refeicao_internacional", "almoco_pinda")
+}
+CATEGORIAS_DIVERSAS = {
+    k: v for k, v in CATEGORIAS_VIAGEM.items() if k not in CATEGORIAS_ALIMENTACAO
+}
 # Tipo em que a descrição é obrigatória (sem ela, não dá para saber o que foi).
 CATEGORIA_DESCRICAO_OBRIGATORIA = "despesas_diversas"
 # Nomes da primeira versão (só em bancos de teste locais): mostrados, nunca aceitos.

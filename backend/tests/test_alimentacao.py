@@ -386,9 +386,10 @@ def test_motivo_obrigatorio_e_da_lista(cenario):
 def test_varias_notas_com_categoria(cenario):
     entrar(cenario, COLAB)
     ontem = (date.today() - timedelta(days=1)).isoformat()
+    anteontem = (date.today() - timedelta(days=2)).isoformat()
     notas = [
         nota_despesa("30,00", ontem, "refeicao", 0),
-        nota_despesa("25,00", ontem, "taxi_uber", 1),
+        nota_despesa("25,00", anteontem, "refeicao", 1),
         nota_despesa("38,00", None, "almoco_pinda", 2),
     ]
     arquivos = [
@@ -402,10 +403,11 @@ def test_varias_notas_com_categoria(cenario):
     assert sol["valor_total"] == "93.00" and len(sol["despesas"]) == 3
     assert [d["categoria_rotulo"] for d in sol["despesas"]] == [
         "Refeição - Nacional",
-        "Taxi ou Uber",
+        "Refeição - Nacional",
         "Almoço em Pinda - Fora da planta",
     ]
-    assert sol["alerta_limite"] is None  # refeição de cada dia ≤ R$ 40; Uber não conta
+    assert sol["valor_total"] == "93.00"
+    assert sol["alerta_limite"] is None  # refeição de cada dia ≤ R$ 40
 
 
 def test_limite_de_r40_soma_as_refeicoes_do_dia(cenario):
@@ -420,13 +422,15 @@ def test_limite_de_r40_soma_as_refeicoes_do_dia(cenario):
     ]
     sol = enviar(cenario, notas=notas, arquivos=arquivos).json()
     assert "R$ 40,00 por dia" in sol["alerta_limite"]
-    # Hospedagem cara não é refeição: sem alerta.
-    assert enviar(cenario, valor="400,00", categoria="hospedagem").json()["alerta_limite"] is None
+    # Hospedagem é de "Despesas diversas": na alimentação a categoria é recusada.
+    r = enviar(cenario, valor="400,00", categoria="hospedagem")
+    assert r.status_code == 400 and "categoria inválida" in r.json()["detail"]
 
 
 def test_categoria_obrigatoria_e_da_lista(cenario):
     entrar(cenario, COLAB)
-    for categoria in ("", "churrasco", "diversos"):
+    # Na alimentação só vale refeição e almoço em Pinda (o resto é de despesas diversas).
+    for categoria in ("", "churrasco", "diversos", "taxi_uber", "quilometragem"):
         r = enviar(cenario, categoria=categoria)
         assert r.status_code == 400 and "categoria inválida" in r.json()["detail"]
 
@@ -443,7 +447,7 @@ def test_correcao_adiciona_e_remove_notas(cenario):
     entrar(cenario, COLAB)
     notas = [
         nota_despesa("45,90", arquivo=None, id=sol["despesas"][0]["id"]),
-        nota_despesa("18,00", None, "taxi_uber", 0),
+        nota_despesa("18,00", None, "almoco_pinda", 0),
     ]
     r = reenviar(cenario, sol, notas, [("arquivos", ("u.jpg", JPG, "image/jpeg"))])
     assert r.status_code == 200, r.text
@@ -451,7 +455,7 @@ def test_correcao_adiciona_e_remove_notas(cenario):
     decidir(cenario, sol["id"], "conferir", THAIS, "financeiro", False, "Só o Uber")
     entrar(cenario, COLAB)
     uber = r.json()["despesas"][1]["id"]
-    r = reenviar(cenario, sol, [nota_despesa("18,00", None, "taxi_uber", None, id=uber)])
+    r = reenviar(cenario, sol, [nota_despesa("18,00", None, "almoco_pinda", None, id=uber)])
     assert r.json()["valor_total"] == "18.00" and len(r.json()["despesas"]) == 1
 
 
