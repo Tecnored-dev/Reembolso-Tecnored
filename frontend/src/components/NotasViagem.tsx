@@ -34,8 +34,8 @@ interface Props {
   notas: NotaForm[]
   setNotas: Dispatch<SetStateAction<NotaForm[]>>
   cadastros: Cadastros | null
-  /** Despesas diversas: as notas não têm categoria. */
-  semCategoria?: boolean
+  /** Categorias que a nota aceita (padrão: todas as de viagem, menos a quilometragem se `semKm`). */
+  categoriasDoTipo?: { id: CategoriaViagem; rotulo: string }[]
   /** Prestação de contas do adiantamento: sem quilometragem (só vale no reembolso). */
   semKm?: boolean
   /** Limite de refeição por dia (padrão: o da viagem, R$ 135). */
@@ -139,7 +139,7 @@ export default function NotasViagem({
   notas,
   setNotas,
   cadastros,
-  semCategoria = false,
+  categoriasDoTipo,
   semKm = false,
   limiteDia,
   categoriasRefeicao,
@@ -148,19 +148,30 @@ export default function NotasViagem({
   const valorPorKm = Number(cadastros?.valor_km ?? 1)
   const maxPontos = cadastros?.max_pontos_percurso ?? 8
   const categorias = useMemo(
-    () => (cadastros?.categorias_viagem ?? []).filter((c) => !(semKm && c.id === CATEGORIA_KM)),
-    [cadastros, semKm]
+    () =>
+      categoriasDoTipo ??
+      (cadastros?.categorias_viagem ?? []).filter((c) => !(semKm && c.id === CATEGORIA_KM)),
+    [cadastros, semKm, categoriasDoTipo]
   )
+  // Nota de pedido antigo com categoria que o tipo não aceita mais (ex.: Uber na
+  // alimentação): continua aparecendo, para dar para corrigir o pedido.
+  function opcoesDaNota(atual: string) {
+    if (!atual || categorias.some((c) => c.id === atual)) return categorias
+    const rotulo =
+      cadastros?.categorias_viagem.find((c) => c.id === atual)?.rotulo ??
+      (atual === 'diversos' ? 'Despesas diversas' : atual)
+    return [...categorias, { id: atual, rotulo }]
+  }
   const total = useMemo(() => somarValores(notas.map((n) => n.valor)), [notas])
   const alertas = useMemo(
     () =>
       alertasViagem(
         notas.map((n) => ({ categoria: n.categoria, data: n.data, valor: n.valor })),
-        semCategoria ? 0 : (limiteDia ?? Number(cadastros?.limite_refeicao_dia ?? 0)),
+        limiteDia ?? Number(cadastros?.limite_refeicao_dia ?? 0),
         Number(cadastros?.limite_solicitacao ?? 0),
         categoriasRefeicao
       ),
-    [notas, cadastros, semCategoria, limiteDia, categoriasRefeicao]
+    [notas, cadastros, limiteDia, categoriasRefeicao]
   )
 
   // Leitura automática: situação por nota e a requisição em andamento (para
@@ -190,7 +201,7 @@ export default function NotasViagem({
       const analise = await analisarComprovante(arquivo, controle.signal)
       if (controle.signal.aborted) return
       const opcoes = {
-        categorias: semCategoria ? [] : categorias.map((c) => c.id).filter((id) => id !== CATEGORIA_KM),
+        categorias: categorias.map((c) => c.id).filter((id) => id !== CATEGORIA_KM),
         hoje: hojeISO(),
       }
       const nota = notasAtuais.current.find((n) => n.chave === chave)
@@ -305,27 +316,25 @@ export default function NotasViagem({
               </div>
               )}
               <div className={styles.linha}>
-                {!semCategoria && (
-                  <div className={ui.campo}>
-                    <label htmlFor={`cat-${n.chave}`}>
-                      Categoria <Selo estado={n.lidos?.categoria} />
-                    </label>
-                    <select
-                      id={`cat-${n.chave}`}
-                      className={classeCampo(n.lidos?.categoria)}
-                      value={n.categoria}
-                      onChange={(e) => mudarNota(n.chave, { categoria: e.target.value as CategoriaViagem })}
-                      required
-                    >
-                      <option value="">Selecione…</option>
-                      {categorias.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.rotulo}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                )}
+                <div className={ui.campo}>
+                  <label htmlFor={`cat-${n.chave}`}>
+                    Categoria <Selo estado={n.lidos?.categoria} />
+                  </label>
+                  <select
+                    id={`cat-${n.chave}`}
+                    className={classeCampo(n.lidos?.categoria)}
+                    value={n.categoria}
+                    onChange={(e) => mudarNota(n.chave, { categoria: e.target.value as CategoriaViagem })}
+                    required
+                  >
+                    <option value="">Selecione…</option>
+                    {opcoesDaNota(n.categoria).map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.rotulo}
+                      </option>
+                    ))}
+                  </select>
+                </div>
                 <div className={ui.campo}>
                   <label htmlFor={`data-${n.chave}`}>
                     Data <Selo estado={n.lidos?.data} />

@@ -32,13 +32,13 @@ const TIPOS: { id: TipoDespesas; rotulo: string; ajuda: string; exemplo: string 
   {
     id: 'alimentacao',
     rotulo: 'Reembolso de alimentação',
-    ajuda: 'Refeições e demais gastos com nota (Uber, combustível, estacionamento…). Escolha a categoria de cada nota.',
+    ajuda: 'Refeições (nacional, internacional ou almoço em Pinda). Para Uber, combustível, quilometragem e outros gastos, use "Despesas diversas".',
     exemplo: 'Ex.: Visita técnica ao cliente em Taubaté',
   },
   {
     id: 'diversas',
     rotulo: 'Despesas diversas',
-    ajuda: 'Despesas que não se encaixam nas categorias — por exemplo, um carregador ou créditos de celular.',
+    ajuda: 'Tudo que não é refeição: Uber, combustível, estacionamento, quilometragem, carregador, créditos de celular… Escolha a categoria de cada nota.',
     exemplo: 'Ex.: Carregador de notebook para a visita técnica',
   },
 ]
@@ -77,6 +77,24 @@ export default function AlimentacaoFormPage({ tipo: tipoPedido = 'alimentacao' }
   // Na correção, o tipo é o do pedido devolvido.
   const tipo: TipoDespesas = original ? (original.tipo === 'diversas' ? 'diversas' : 'alimentacao') : escolhido
   const texto = TIPOS.find((t) => t.id === tipo) ?? TIPOS[0]
+  // Cada tipo aceita as suas categorias (alimentação: refeição; diversas: o resto).
+  const categoriasDoTipo = tipo === 'diversas' ? cadastros?.categorias_diversas : cadastros?.categorias_alimentacao
+
+  // Pedido novo: ao trocar o tipo, a categoria que o novo tipo não aceita é limpa
+  // (e o valor calculado da quilometragem, que depende dela).
+  useEffect(() => {
+    if (corrigindo || !categoriasDoTipo) return
+    const aceitas = categoriasDoTipo.map((c) => c.id)
+    setNotas((atual) =>
+      atual.some((n) => n.categoria && !aceitas.includes(n.categoria))
+        ? atual.map((n) =>
+            n.categoria && !aceitas.includes(n.categoria)
+              ? { ...n, categoria: '', valor: n.categoria === 'quilometragem' ? '' : n.valor }
+              : n
+          )
+        : atual
+    )
+  }, [categoriasDoTipo, corrigindo])
 
   // A lista de gestores também diz se a pessoa do pedido é gestora.
   useEffect(() => {
@@ -122,7 +140,7 @@ export default function AlimentacaoFormPage({ tipo: tipoPedido = 'alimentacao' }
       return
     }
     const form = new FormData()
-    anexarNotas(form, tipo === 'diversas' ? notas.map((n) => ({ ...n, categoria: 'diversos' })) : notas)
+    anexarNotas(form, notas)
     form.append('descricao', descricao)
     form.append('motivo', motivo)
     form.append('empresa_id', empresa)
@@ -230,7 +248,7 @@ export default function AlimentacaoFormPage({ tipo: tipoPedido = 'alimentacao' }
           notas={notas}
           setNotas={setNotas}
           cadastros={cadastros}
-          semCategoria={tipo === 'diversas'}
+          categoriasDoTipo={categoriasDoTipo}
           limiteDia={Number(cadastros?.limite_alimentacao_dia ?? 0)}
           categoriasRefeicao={CATEGORIAS_REFEICAO}
           lerComprovante={config.leitura_comprovante}

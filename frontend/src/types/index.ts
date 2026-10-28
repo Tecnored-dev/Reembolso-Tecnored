@@ -90,6 +90,9 @@ export interface Cadastros {
   limite_refeicao_dia: string
   limite_solicitacao: string
   categorias_viagem: { id: CategoriaViagem; rotulo: string }[]
+  /** Reembolso de despesas: categorias de cada tipo (alimentação x diversas) */
+  categorias_alimentacao: { id: CategoriaViagem; rotulo: string }[]
+  categorias_diversas: { id: CategoriaViagem; rotulo: string }[]
   /** Motivos da despesa (lista do ARGO) — alimentação e despesas diversas */
   motivos: string[]
   /** Reembolso de despesas - alimentação: limite de refeição por dia (só alerta) */

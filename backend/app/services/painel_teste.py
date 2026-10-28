@@ -259,8 +259,8 @@ def criar_demo(db: Session, settings: Settings, armazenamento: Armazenamento) ->
     sol = despesas(
         fluxo.TIPO_DIVERSAS,
         (
-            _nota("diversos", 3, "89.90", "Carregador de celular"),
-            _nota("diversos", 3, "25.00", "Créditos de celular", arquivo=1),
+            _nota("despesas_diversas", 3, "89.90", "Carregador de celular"),
+            _nota("despesas_diversas", 3, "25.00", "Créditos de celular", arquivo=1),
         ),
         "Itens de trabalho (demonstração)",
         "Outros",
@@ -289,7 +289,7 @@ def criar_demo(db: Session, settings: Settings, armazenamento: Armazenamento) ->
     # 9) Finalizado - Recusado
     sol = despesas(
         fluxo.TIPO_DIVERSAS,
-        (_nota("diversos", 5, "240.00", "Compra sem autorização"),),
+        (_nota("despesas_diversas", 5, "240.00", "Compra sem autorização"),),
         "Compra (demonstração)",
         "Outros",
     )

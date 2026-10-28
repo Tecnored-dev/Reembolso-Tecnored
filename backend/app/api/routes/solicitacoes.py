@@ -254,7 +254,7 @@ def _completo(sol: Solicitacao, usuario: Usuario) -> dict:
                     _ROTULO_COMPROVANTE
                     if d.categoria == fluxo.COMPROVANTE_DEVOLUCAO
                     else "Despesas diversas"
-                    if sol.tipo == fluxo.TIPO_DIVERSAS
+                    if d.categoria == fluxo.CATEGORIA_DIVERSAS
                     else CATEGORIAS_VIAGEM.get(d.categoria)
                     or CATEGORIAS_ANTIGAS.get(d.categoria, d.categoria)
                 ),
@@ -316,7 +316,7 @@ async def _arquivo(upload: UploadFile | None) -> servico_arquivos.ArquivoValidad
     return servico_arquivos.validar(conteudo, upload.filename)
 
 
-def _itens(despesas: str, com_km: bool = True) -> tuple[fluxo.ItemViagem, ...]:
+def _itens(despesas: str) -> tuple[fluxo.ItemViagem, ...]:
     try:
         notas = _NOTAS.validate_python(json.loads(despesas or "[]"))
     except (ValueError, ValidationError):
@@ -324,10 +324,15 @@ def _itens(despesas: str, com_km: bool = True) -> tuple[fluxo.ItemViagem, ...]:
     itens = []
     for n, nota in enumerate(notas, start=1):
         km = None
+        erro_km = None
         try:
-            if nota.categoria == CATEGORIA_KM and com_km:
-                km = ler_km(nota.km)
-                valor = fluxo.valor_km(km)
+            if nota.categoria == CATEGORIA_KM:
+                try:
+                    km = ler_km(nota.km)
+                    valor = fluxo.valor_km(km)
+                except RegraNegocio as erro:
+                    # O fluxo dá a mensagem depois de conferir a categoria.
+                    erro_km, valor = str(erro), Decimal("0.00")
             else:
                 valor = ler_valor(nota.valor)
         except RegraNegocio as erro:
@@ -342,6 +347,7 @@ def _itens(despesas: str, com_km: bool = True) -> tuple[fluxo.ItemViagem, ...]:
                 id=nota.id,
                 km=km,
                 percurso=tuple(nota.percurso),
+                erro_km=erro_km,
             )
         )
     return tuple(itens)
@@ -580,7 +586,7 @@ async def prestar_contas(
     settings: Settings = Depends(get_settings),
     armazenamento: Armazenamento = Depends(get_armazenamento),
 ):
-    itens = _itens(despesas, com_km=False)  # sem quilometragem na prestação
+    itens = _itens(despesas)
     validados = await _arquivos(arquivos)
     sol = fluxo.enviar_prestacao(db, settings, armazenamento, usuario, sol_id, itens, validados)
     return _completo(sol, usuario)

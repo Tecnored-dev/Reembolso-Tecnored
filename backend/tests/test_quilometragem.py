@@ -30,7 +30,8 @@ def nota_km(km="42,5", percurso=None, descricao="Visita ao cliente", id=None, **
 
 def enviar(cliente, notas, arquivos=None):
     entrar(cliente, COLAB)
-    return enviar_alimentacao(cliente, notas=notas, arquivos=arquivos)
+    # Quilometragem é categoria de "Despesas diversas" (a alimentação só tem refeição).
+    return enviar_alimentacao(cliente, notas=notas, arquivos=arquivos, rota="diversas")
 
 
 def test_quilometragem_vale_um_real_por_km_e_nao_tem_comprovante(cenario):
@@ -60,6 +61,12 @@ def test_nota_comum_sem_valor_continua_recusada(cenario):
     del nota["valor"]
     r = enviar(cenario, [nota], [("arquivos", ("u.jpg", JPG, "image/jpeg"))])
     assert r.status_code == 400 and "Valor inválido" in r.text
+
+
+def test_na_alimentacao_nao_tem_quilometragem(cenario):
+    entrar(cenario, COLAB)
+    r = enviar_alimentacao(cenario, notas=[nota_km()], rota="alimentacao")
+    assert r.status_code == 400 and "categoria inválida" in r.text
 
 
 def test_valor_enviado_pelo_cliente_e_ignorado(cenario):

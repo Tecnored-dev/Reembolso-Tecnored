@@ -54,7 +54,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 
@@ -66,6 +66,8 @@ from app.auth.sessoes import Usuario, agora_utc
 from app.config import (
     CATEGORIA_DESCRICAO_OBRIGATORIA,
     CATEGORIA_KM,
+    CATEGORIAS_ALIMENTACAO,
+    CATEGORIAS_DIVERSAS,
     CATEGORIAS_PRESTACAO,
     CATEGORIAS_VIAGEM,
     DIAS_EXPIRACAO_DEVOLVIDO,
@@ -227,6 +229,9 @@ class ItemViagem:
     # O `valor` da nota é sempre km x valor por km (ver `valor_km`).
     km: Decimal | None = None
     percurso: tuple[str, ...] = ()
+    # Km ilegível na entrada: o erro (em português) só é dado depois de conferida a
+    # categoria, para não dizer "informe os km" a quem usou uma categoria que não vale.
+    erro_km: str | None = None
 
 
 @dataclass(frozen=True)
@@ -398,7 +403,6 @@ def criar_alimentacao(
     ou despesas diversas, com uma ou mais notas, mesmo fluxo."""
     if tipo not in TIPOS_DESPESAS:
         raise RegraNegocio("Tipo de solicitação inválido.")
-    dados = _normalizar_despesas(dados, tipo)
     pessoa = _pessoa_do_pedido(db, settings, usuario, dados.beneficiario)
     # Na criação nenhuma nota existe ainda: qualquer `id` é recusado.
     _validar_despesas(dados, tipo, arquivos_enviados, existentes=set())
@@ -487,9 +491,11 @@ def reenviar(
     _exigir_status(sol, DEVOLVIDO)
     if sol.tipo not in TIPOS_DESPESAS:
         raise RegraNegocio("Esta solicitação não é de alimentação (nem de despesas diversas).")
-    dados = _normalizar_despesas(dados, sol.tipo)
     atuais = {d.id: d for d in sol.despesas}
-    _validar_despesas(dados, sol.tipo, arquivos_enviados, existentes=set(atuais))
+    # Pedidos antigos podem ter categorias que o tipo não aceita mais (ex.: Uber na
+    # alimentação, ou "diversos"): quem corrige não fica travado por isso.
+    antigas = frozenset(d.categoria for d in atuais.values())
+    _validar_despesas(dados, sol.tipo, arquivos_enviados, existentes=set(atuais), antigas=antigas)
     if not sol.pula_gestor:
         gestor = _validar_gestor(
             db, settings, sol.solicitante_email, sol.criado_por_email, dados.gestor_email
@@ -540,20 +546,12 @@ def reenviar(
     return sol
 
 
-def _normalizar_despesas(dados: DadosDespesas, tipo: str) -> DadosDespesas:
-    """Despesas diversas não têm categoria por nota: todas viram `diversos`."""
-    if tipo != TIPO_DIVERSAS:
-        return dados
-    return replace(
-        dados, itens=tuple(replace(i, categoria=CATEGORIA_DIVERSAS) for i in dados.itens)
-    )
-
-
 def _validar_despesas(
     dados: DadosDespesas,
     tipo: str,
     arquivos_enviados: list[arquivos.ArquivoValidado],
     existentes: set[int],
+    antigas: frozenset[str] = frozenset(),
 ) -> None:
     if dados.motivo not in MOTIVOS:
         raise RegraNegocio("Escolha o motivo da despesa.")
@@ -561,7 +559,8 @@ def _validar_despesas(
         raise RegraNegocio("Descreva a despesa.")
     if len(dados.descricao) > 500:
         raise RegraNegocio("Descrição muito longa (máximo 500 caracteres).")
-    categorias = CATEGORIAS_VIAGEM if tipo == TIPO_ALIMENTACAO else {CATEGORIA_DIVERSAS: ""}
+    categorias = dict(CATEGORIAS_ALIMENTACAO if tipo == TIPO_ALIMENTACAO else CATEGORIAS_DIVERSAS)
+    categorias.update({c: CATEGORIAS_VIAGEM.get(c, "") for c in antigas})
     _validar_itens(dados.itens, arquivos_enviados, existentes, categorias)
 
 
@@ -871,6 +870,8 @@ def _validar_km(n: int, item: ItemViagem) -> None:
         return
     if item.arquivo is not None:
         raise RegraNegocio(f"Nota {n}: quilometragem não leva comprovante.")
+    if item.erro_km:
+        raise RegraNegocio(f"Nota {n}: {item.erro_km}")
     if not item.descricao.strip():
         raise RegraNegocio(f"Nota {n}: descreva a quilometragem.")
     pontos = [p.strip() for p in item.percurso]

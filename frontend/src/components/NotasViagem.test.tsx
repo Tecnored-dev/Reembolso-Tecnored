@@ -18,6 +18,11 @@ const CADASTROS = {
   limite_solicitacao: '5000.00',
 } as unknown as Cadastros
 
+const CATEGORIAS_DIVERSAS = [
+  { id: 'hospedagem', rotulo: 'Hospedagem' },
+  { id: 'taxi_uber', rotulo: 'Taxi ou Uber' },
+]
+
 const VAZIO: CampoLido = { valor: null, estado: 'nao_identificado', alternativas: [] }
 const lido = (valor: string, estado: CampoLido['estado'] = 'identificado', alternativas: string[] = []) => ({
   valor,
@@ -43,14 +48,14 @@ function analise(campos: Partial<AnaliseComprovante['campos']> = {}, extra: Part
   } as AnaliseComprovante
 }
 
-function Tela({ semCategoria = false, lerComprovante = true }) {
+function Tela({ diversas = false, lerComprovante = true }) {
   const [notas, setNotas] = useState<NotaForm[]>([novaNota()])
   return (
     <NotasViagem
       notas={notas}
       setNotas={setNotas}
       cadastros={CADASTROS}
-      semCategoria={semCategoria}
+      categoriasDoTipo={diversas ? CATEGORIAS_DIVERSAS : undefined}
       lerComprovante={lerComprovante}
     />
   )
@@ -162,12 +167,13 @@ describe('NotasViagem com leitura do comprovante', () => {
     expect(screen.queryByText('Lido da nota')).toBeNull()
   })
 
-  it('despesas diversas: sem categoria, o resto é preenchido', async () => {
+  it('despesas diversas: a categoria vem da lista do tipo, o resto é preenchido', async () => {
     analisar.mockResolvedValue(analise())
-    render(<Tela semCategoria />)
+    render(<Tela diversas />)
     anexar(foto())
     await screen.findByText(/Preenchemos os campos marcados/)
-    expect(screen.queryByLabelText(/Categoria/)).toBeNull()
+    expect(screen.getByRole('option', { name: 'Taxi ou Uber' })).toBeTruthy()
+    expect(screen.queryByRole('option', { name: /Refeição/ })).toBeNull()
     expect(campo(/Valor \(R\$\)/).value).toBe('48,90')
   })
 
