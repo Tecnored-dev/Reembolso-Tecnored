@@ -25,6 +25,8 @@ export interface AppConfig {
   commit_hash: string | null
   login_microsoft: boolean
   login_dev: boolean
+  /** Leitura automática do comprovante disponível neste ambiente (OCR instalado) */
+  leitura_comprovante: boolean
 }
 
 export interface ApiError {
@@ -95,6 +97,10 @@ export interface Cadastros {
   /** Diária de viagem: valor da diária integral e máximo de diárias por linha */
   valor_diaria: string
   max_diarias: number
+  /** Quilometragem (Thais, 22/10): valor por km, limite de km por nota e de pontos do percurso */
+  valor_km: string
+  km_maximo: string
+  max_pontos_percurso: number
 }
 
 export interface LinhaDiaria {
@@ -150,8 +156,12 @@ export interface Despesa {
   data_despesa: string
   valor: string
   descricao: string | null
-  arquivo_nome: string
-  arquivo_tipo: string
+  /** Vazio na quilometragem (não tem comprovante) */
+  arquivo_nome: string | null
+  arquivo_tipo: string | null
+  /** Só na quilometragem: km informados e percurso (origem, paradas, destino) */
+  km: string | null
+  percurso: string[] | null
 }
 
 export interface EventoHistorico {
@@ -241,4 +251,35 @@ export interface TesteEstado {
   admin: boolean
   vendo_como: { email: string; nome: string; papeis: Papel[] } | null
   usuarios: UsuarioTeste[]
+}
+
+// ===========================================================================
+// Leitura automática do comprovante — POST /api/comprovantes/analisar
+// Só sugere: o colaborador confere e corrige antes de enviar.
+// ===========================================================================
+export type EstadoCampoLido = 'identificado' | 'ambiguo' | 'nao_identificado'
+
+export interface CampoLido {
+  valor: string | null
+  estado: EstadoCampoLido
+  /** Outros candidatos, quando o campo é ambíguo */
+  alternativas: string[]
+}
+
+export interface AnaliseComprovante {
+  status: 'lido' | 'parcial' | 'ilegivel'
+  origem: 'texto_pdf' | 'ocr' | null
+  campos: {
+    /** AAAA-MM-DD */
+    data: CampoLido
+    /** "48.90" */
+    valor_total: CampoLido
+    estabelecimento: CampoLido
+    /** 14 caracteres, sem pontuação */
+    cnpj: CampoLido
+    numero_documento: CampoLido
+    /** Id de `categorias_viagem` (GET /api/cadastros) */
+    categoria_sugerida: CampoLido
+  }
+  avisos: string[]
 }

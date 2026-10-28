@@ -49,7 +49,7 @@ const CATEGORIAS_REFEICAO = ['refeicao', 'almoco_pinda']
 export default function AlimentacaoFormPage({ tipo: tipoPedido = 'alimentacao' }: Props) {
   const { id } = useParams()
   const corrigindo = Boolean(id)
-  const { tem, perfil } = useContexto()
+  const { tem, perfil, config } = useContexto()
   const navigate = useNavigate()
 
   const { data: cadastros } = useApi<Cadastros>('/api/cadastros')
@@ -233,6 +233,7 @@ export default function AlimentacaoFormPage({ tipo: tipoPedido = 'alimentacao' }
           semCategoria={tipo === 'diversas'}
           limiteDia={Number(cadastros?.limite_alimentacao_dia ?? 0)}
           categoriasRefeicao={CATEGORIAS_REFEICAO}
+          lerComprovante={config.leitura_comprovante}
         />
 
         <h2 className={ui.blocoTitulo}>Quem paga e quem aprova</h2>

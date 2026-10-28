@@ -3,6 +3,7 @@ import {
   alertasViagem,
   calcularDiarias,
   caminhoInterno,
+  formatarCnpj,
   formatarData,
   formatarMoeda,
   formatVersion,
@@ -23,6 +24,7 @@ const base: AppConfig = {
   commit_hash: 'abc1234',
   login_microsoft: false,
   login_dev: true,
+  leitura_comprovante: false,
 }
 
 describe('formatVersion', () => {
@@ -48,6 +50,14 @@ describe('formatação', () => {
   it('data sem fuso', () => {
     expect(formatarData('2026-10-06')).toBe('06/10/2026')
     expect(formatarData(null)).toBe('—')
+  })
+})
+
+describe('formatarCnpj', () => {
+  it('pontua o CNPJ, inclusive o alfanumérico', () => {
+    expect(formatarCnpj('11222333000181')).toBe('11.222.333/0001-81')
+    expect(formatarCnpj('12ABC34501DE35')).toBe('12.ABC.345/01DE-35')
+    expect(formatarCnpj('123')).toBe('123')
   })
 })
 

@@ -58,6 +58,12 @@ LIMITE_ALIMENTACAO_DIA = Decimal("40.00")
 LIMITE_SOLICITACAO = Decimal("5000.00")  # total por solicitação: só ALERTA, não bloqueia
 MAX_DESPESAS_VIAGEM = 30  # notas por reembolso de viagem (e por prestação de contas)
 
+# Leitura automática de comprovantes (OCR, só sugere o preenchimento): leituras ao
+# mesmo tempo e quanto esperar por uma vaga antes de responder "ocupado" (aí o
+# colaborador preenche à mão). Limites por arquivo ficam em app/ocr/extracao.py.
+OCR_ANALISES_SIMULTANEAS = 2
+OCR_ESPERA_VAGA_SEGUNDOS = 3
+
 # Adiantamento de diárias (regras de 06/10/2026: diárias = R$ 135 vezes o número de dias).
 # Respostas da Thais (09/10): diária extra (mais de 5 dias) tem o mesmo valor;
 # viagem internacional não tem diária (só reembolso); a prestação de contas
@@ -99,6 +105,18 @@ CATEGORIAS_VIAGEM = {
     "compras_autorizadas": "Compras com autorização de custos",
     "despesas_diversas": "Despesas diversas",
 }
+# Quilometragem com veículo próprio (Thais, 22/10): valor fixo por km (R$ 1,00),
+# sem comprovante, só no reembolso (não vale na prestação de contas do
+# adiantamento). O colaborador informa origem, destino, paradas e os km; o
+# valor da nota é sempre km x valor por km, calculado no servidor. Versão
+# provisória: o km é digitado (depois o percurso será calculado por mapa).
+# O valor por km vem de VALOR_KM no ambiente (padrão R$ 1,00).
+CATEGORIA_KM = "quilometragem"
+VALOR_KM = Decimal(os.environ.get("VALOR_KM", "1.00"))
+KM_MAXIMO = Decimal("2000")  # por nota: trava contra erro de digitação
+MAX_PONTOS_PERCURSO = 8  # origem + paradas + destino
+# Tipos aceitos na prestação de contas do adiantamento (sem quilometragem).
+CATEGORIAS_PRESTACAO = {k: v for k, v in CATEGORIAS_VIAGEM.items() if k != CATEGORIA_KM}
 # Tipo em que a descrição é obrigatória (sem ela, não dá para saber o que foi).
 CATEGORIA_DESCRICAO_OBRIGATORIA = "despesas_diversas"
 # Nomes da primeira versão (só em bancos de teste locais): mostrados, nunca aceitos.

@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app import logs
-from app.api.routes import auth, cadastros, sistema, solicitacoes, teste
+from app.api.routes import auth, cadastros, comprovantes, sistema, solicitacoes, teste
 from app.config import get_settings
 from app.services.erros import NaoEncontrado, RegraNegocio, SemPermissao
 
@@ -89,6 +89,7 @@ def create_app() -> FastAPI:
     app.include_router(auth.router)
     app.include_router(cadastros.router)
     app.include_router(solicitacoes.router)
+    app.include_router(comprovantes.router)
     app.include_router(teste.router)
     app.include_router(solicitacoes.tarefas)
     return app

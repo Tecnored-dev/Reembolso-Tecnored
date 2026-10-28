@@ -163,10 +163,15 @@ class Despesa(Base):
     valor: Mapped[Decimal] = mapped_column(DINHEIRO, nullable=False)
     descricao: Mapped[str | None] = mapped_column(String(200), nullable=True)
     # Chave no armazenamento de arquivos (app/storage), nunca o arquivo em si.
-    arquivo_chave: Mapped[str] = mapped_column(String(300), nullable=False)
-    arquivo_nome: Mapped[str] = mapped_column(String(255), nullable=False)
-    arquivo_tipo: Mapped[str] = mapped_column(String(60), nullable=False)
-    arquivo_tamanho: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Vazios só na quilometragem (não tem comprovante).
+    arquivo_chave: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    arquivo_nome: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    arquivo_tipo: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    arquivo_tamanho: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Quilometragem: km informados e percurso (lista JSON de endereços:
+    # origem, paradas, destino). Nas demais notas ficam vazios.
+    km: Mapped[Decimal | None] = mapped_column(Numeric(8, 1), nullable=True)
+    percurso: Mapped[str | None] = mapped_column(Text, nullable=True)
     criado_em: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
     solicitacao: Mapped[Solicitacao] = relationship(back_populates="despesas")
