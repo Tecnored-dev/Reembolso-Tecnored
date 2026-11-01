@@ -213,7 +213,7 @@ jobs:
       # semantic-release ficam na raiz de backend/, fora delas. Os testes
       # (backend/tests/) e o requirements-dev.txt não entram na imagem.
       - name: Detectar mudanças em backend/frontend/docker-compose.yml
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@v4
         id: filter
         with:
           base: ${{ github.event.before }}
