@@ -5,7 +5,7 @@ httpx==0.28.1
 SQLAlchemy==2.1.4
 alembic==1.20.1
 psycopg[binary]==3.3.6
-python-multipart==0.0.32
+python-multipart==0.0.33
 # OCR dos comprovantes (sugestão de preenchimento). O binário do Tesseract
 # (tesseract-ocr + tesseract-ocr-por) vem do apt no Dockerfile.
 pytesseract==0.3.13
