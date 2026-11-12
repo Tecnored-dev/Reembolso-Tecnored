@@ -14,7 +14,7 @@ Segue o padrão TI da Tecnored (repositório `tecnored-dev/Hello-World`).
 | Camada   | Tecnologia |
 |----------|------------|
 | Backend  | FastAPI · SQLAlchemy 2 · Alembic · PostgreSQL 17 |
-| Frontend | React 18 · Vite 5 · TypeScript · CSS Modules · Nginx |
+| Frontend | React 18 · Vite 8 · TypeScript · CSS Modules · Nginx |
 | Login    | Azure AD (MSAL) + Cloudflare Access SSO |
 | Deploy   | Docker · GitHub Actions · Dokploy |
 

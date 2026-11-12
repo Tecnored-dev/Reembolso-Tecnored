@@ -93,6 +93,8 @@ def test_login_microsoft_atualiza_a_lista(cliente, db, settings, monkeypatch):
             }
 
     class RespostaFalsa:
+        status_code = 200
+
         def json(self):
             return {"value": []}
 
@@ -108,7 +110,7 @@ def test_login_microsoft_atualiza_a_lista(cliente, db, settings, monkeypatch):
 
     tokens = []
     monkeypatch.setattr(auth, "_msal", lambda s: MsalFalso())
-    monkeypatch.setattr(auth.httpx, "AsyncClient", lambda: ClienteFalso())
+    monkeypatch.setattr(auth.httpx, "AsyncClient", lambda **k: ClienteFalso())
     monkeypatch.setattr(
         gestores,
         "buscar_membros",

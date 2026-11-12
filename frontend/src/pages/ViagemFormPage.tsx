@@ -54,8 +54,8 @@ export default function ViagemFormPage() {
   const [fim, setFim] = useState('')
   const [internacional, setInternacional] = useState(false)
   const [descricao, setDescricao] = useState('')
-  const [empresa, setEmpresa] = useState('')
-  const [centroCusto, setCentroCusto] = useState('')
+  const [empresaEscolhida, setEmpresa] = useState('')
+  const [centroCustoEscolhido, setCentroCusto] = useState('')
   const [gestor, setGestor] = useState('')
   const [linhas, setLinhas] = useState<LinhaDiariaForm[]>(() => [novaLinhaDiaria()])
   const [erro, setErro] = useState<string | null>(null)
@@ -70,16 +70,14 @@ export default function ViagemFormPage() {
   }, [])
 
   // Só uma empresa de débito ativa (hoje, só a Tecnored): já vem escolhida.
-  useEffect(() => {
-    if (!corrigindo && cadastros?.empresas.length === 1)
-      setEmpresa(String(cadastros.empresas[0].id))
-  }, [cadastros, corrigindo])
+  const empresa =
+    empresaEscolhida ||
+    (!corrigindo && cadastros?.empresas.length === 1 ? String(cadastros.empresas[0].id) : '')
 
   // Pedido novo: o centro de custo vem com o último usado (dá para trocar).
-  useEffect(() => {
-    if (!corrigindo && cadastros)
-      setCentroCusto((atual) => atual || centroCustoInicial(cadastros.centros_custo, perfil, null))
-  }, [cadastros, corrigindo, perfil])
+  const centroCusto =
+    centroCustoEscolhido ||
+    (!corrigindo && cadastros ? centroCustoInicial(cadastros.centros_custo, perfil, null) : '')
 
   // Correção: carrega o que foi enviado para editar em cima.
   useEffect(() => {

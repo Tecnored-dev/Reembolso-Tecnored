@@ -36,6 +36,8 @@ def azure(cliente, settings, monkeypatch):
             }
 
     class Resp:
+        status_code = 200
+
         def json(self):
             return {"value": []}
 
@@ -50,7 +52,7 @@ def azure(cliente, settings, monkeypatch):
             return Resp()
 
     monkeypatch.setattr(auth, "_msal", lambda s: MsalFalso())
-    monkeypatch.setattr(auth.httpx, "AsyncClient", lambda: ClienteFalso())
+    monkeypatch.setattr(auth.httpx, "AsyncClient", lambda **k: ClienteFalso())
     monkeypatch.setattr(auth.gestores, "sincronizar_no_login", lambda *a: False)
     return chamadas
 

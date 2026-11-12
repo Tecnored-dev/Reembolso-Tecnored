@@ -22,8 +22,11 @@ export default function TestePage() {
   }, [])
 
   useEffect(() => {
-    carregar().catch((err) => setMsg({ tipo: 'erro', texto: mensagemErro(err) }))
-  }, [carregar])
+    api
+      .get<TesteEstado>('/api/teste/estado')
+      .then((res) => setEstado(res.data))
+      .catch((err) => setMsg({ tipo: 'erro', texto: mensagemErro(err) }))
+  }, [])
 
   async function executar(acao: () => Promise<string>) {
     setOcupado(true)
@@ -51,7 +54,14 @@ export default function TestePage() {
     }
   }
 
-  if (!estado) return <section className={ui.card}>Carregando…</section>
+  // Sem estado: ainda carregando ou a leitura falhou (aí mostra o erro, em vez de
+  // ficar em "Carregando…" para sempre).
+  if (!estado)
+    return (
+      <section className={ui.card}>
+        {msg?.tipo === 'erro' ? <div className={ui.erro}>{msg.texto}</div> : 'Carregando…'}
+      </section>
+    )
 
   if (!estado.ativo || !estado.admin) {
     return (

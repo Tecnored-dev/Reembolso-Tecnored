@@ -128,7 +128,7 @@ export function anexarNotas(form: FormData, notas: NotaForm[]): void {
 // ---------------------------------------------------------------------------
 const CAMPOS_LIDOS: CampoLidoNota[] = ['categoria', 'data', 'valor', 'descricao']
 
-export interface OpcoesLeitura {
+interface OpcoesLeitura {
   /** Categorias aceitas na nota (ids de `categorias_viagem`); vazio = nota sem categoria. */
   categorias: string[]
   /** Hoje (AAAA-MM-DD): data no futuro não é preenchida, a API recusaria. */

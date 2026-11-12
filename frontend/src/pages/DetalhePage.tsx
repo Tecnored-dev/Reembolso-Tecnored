@@ -114,7 +114,8 @@ export default function DetalhePage() {
   const location = useLocation()
   const [sol, setSol] = useState<Solicitacao | null>(null)
   const [erro, setErro] = useState<string | null>(null)
-  const [anexoUrl, setAnexoUrl] = useState<string | null>(null)
+  // Arquivo da nota aberta, guardado com a URL de onde veio.
+  const [anexo, setAnexo] = useState<{ chave: string; url: string | null; erro: boolean } | null>(null)
   const [comentario, setComentario] = useState('')
   const [dataPagamento, setDataPagamento] = useState(hojeISO())
   const [processando, setProcessando] = useState(false)
@@ -153,21 +154,33 @@ export default function DetalhePage() {
   const despesa = variasNotas
     ? sol?.despesas.find((d) => d.id === notaAberta)
     : sol?.despesas[0]
+  // Quilometragem não tem arquivo. A chave muda só ao trocar de nota (não a cada
+  // ação no pedido), e a resposta de uma nota antiga nunca aparece na nova.
+  const chaveAnexo =
+    sol && despesa?.arquivo_tipo ? `/api/solicitacoes/${sol.id}/despesas/${despesa.id}/arquivo` : null
   useEffect(() => {
-    setAnexoUrl(null)
-    if (!sol || !despesa || !despesa.arquivo_tipo) return // quilometragem não tem arquivo
+    if (!chaveAnexo) return
+    const controle = new AbortController()
     let url: string | null = null
     api
-      .get(`/api/solicitacoes/${sol.id}/despesas/${despesa.id}/arquivo`, { responseType: 'blob' })
+      .get(chaveAnexo, {
+        responseType: 'blob',
+        signal: controle.signal,
+      })
       .then((r) => {
         url = URL.createObjectURL(r.data as Blob)
-        setAnexoUrl(url)
+        setAnexo({ chave: chaveAnexo, url, erro: false })
       })
-      .catch(() => setAnexoUrl(null))
+      .catch(() => {
+        if (!controle.signal.aborted) setAnexo({ chave: chaveAnexo, url: null, erro: true })
+      })
     return () => {
+      controle.abort()
       if (url) URL.revokeObjectURL(url)
     }
-  }, [sol, despesa])
+  }, [chaveAnexo])
+  const anexoAtual = anexo?.chave === chaveAnexo ? anexo : null
+  const anexoUrl = anexoAtual?.url ?? null
 
   async function agir(caminho: string, corpo: object) {
     setErroAcao(null)
@@ -749,7 +762,8 @@ export default function DetalhePage() {
                 <p className={ui.muted}>Quilometragem não tem comprovante.</p>
               </div>
             )}
-            {despesa && despesa.arquivo_tipo && !anexoUrl && <p className={ui.muted}>Carregando a nota…</p>}
+            {chaveAnexo && !anexoAtual && <p className={ui.muted}>Carregando a nota…</p>}
+            {anexoAtual?.erro && <div className={ui.erro}>Não foi possível abrir o arquivo. Tente de novo.</div>}
             {anexoUrl && despesa?.arquivo_tipo?.startsWith('image/') && (
               <a href={anexoUrl} target="_blank" rel="noreferrer">
                 <img src={anexoUrl} alt={`Nota ${sol.codigo}`} className={styles.nota} />

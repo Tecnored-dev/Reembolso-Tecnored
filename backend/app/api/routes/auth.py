@@ -8,6 +8,7 @@ trocando a sessão em memória pela sessão persistida no banco.
 from __future__ import annotations
 
 import asyncio
+import logging
 import secrets
 from urllib.parse import quote
 
@@ -24,6 +25,8 @@ from app.config import Settings, get_settings
 from app.db import get_db
 from app.services import gestores
 from app.services.painel_teste import COOKIE_ADMIN
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(tags=["auth"])
 
@@ -77,6 +80,27 @@ def login(settings: Settings = Depends(get_settings)):
     return resposta
 
 
+async def _grupos_do_usuario(token: str) -> list[str]:
+    """IDs dos grupos do usuário, inclusive por subgrupo (transitiveMemberOf), como a
+    lista de gestores (transitiveMembers): quem aparece como gestor ganha o papel.
+    Segue a paginação; se o Graph falhar, entra sem papéis especiais e registra."""
+    url: str | None = (
+        "https://graph.microsoft.com/v1.0/me/transitiveMemberOf/microsoft.graph.group"
+        "?$select=id&$top=999"
+    )
+    grupos: list[str] = []
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        while url:
+            resp = await client.get(url, headers={"Authorization": f"Bearer {token}"})
+            if resp.status_code != 200:
+                log.warning("Graph não devolveu os grupos do usuário (HTTP %s).", resp.status_code)
+                return grupos
+            dados = resp.json()
+            grupos += [g["id"] for g in dados.get("value", []) if g.get("id")]
+            url = dados.get("@odata.nextLink")
+    return grupos
+
+
 @router.get("/auth/callback")
 async def auth_callback(
     code: str | None = None,
@@ -97,13 +121,7 @@ async def auth_callback(
     if "error" in result:
         return _erro_login(settings, str(result.get("error")))
 
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(
-            "https://graph.microsoft.com/v1.0/me/memberOf",
-            headers={"Authorization": f"Bearer {result['access_token']}"},
-            timeout=10.0,
-        )
-    grupos = [g["id"] for g in resp.json().get("value", []) if g.get("id")]
+    grupos = await _grupos_do_usuario(result["access_token"])
 
     # Aproveita o token de quem está logando para atualizar a lista de gestores
     # (permissão delegada: só dá para ler o grupo em nome de alguém logado).

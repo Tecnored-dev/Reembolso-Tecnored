@@ -27,6 +27,7 @@ export default function Layout() {
   const [perfil, setPerfil] = useState<Perfil | null>(null)
   const [contadores, setContadores] = useState<Record<string, number>>({})
   const [teste, setTeste] = useState<TesteEstado | null>(null)
+  const [falhou, setFalhou] = useState(false)
   const navigate = useNavigate()
   const { pathname } = useLocation()
 
@@ -36,7 +37,10 @@ export default function Layout() {
   }, [])
 
   useEffect(() => {
-    api.get<AppConfig>('/api/config').then((res) => setConfig(res.data))
+    api
+      .get<AppConfig>('/api/config')
+      .then((res) => setConfig(res.data))
+      .catch(() => setFalhou(true))
     api
       .get<Session>('/api/session')
       .then((res) => {
@@ -45,7 +49,9 @@ export default function Layout() {
           .get<TesteEstado>('/api/teste/estado')
           .then((r) => setTeste(r.data))
           .catch(() => setTeste(null)) // painel de teste é opcional
-        return recarregarPerfil()
+        // Erro no perfil não é falta de sessão: voltar para "/" aqui criava um
+        // vaivém com a tela de entrada (que vê a sessão e manda de novo para cá).
+        recarregarPerfil().catch(() => setFalhou(true))
       })
       .catch(() => navigate('/', { replace: true })) // 401 — sem sessão
   }, [navigate, recarregarPerfil])
@@ -67,6 +73,12 @@ export default function Layout() {
     })
   }, [session, pathname])
 
+  if (falhou)
+    return (
+      <div className={styles.carregando}>
+        Não foi possível carregar o sistema. Recarregue a página em instantes.
+      </div>
+    )
   if (!session || !config || !perfil) return <div className={styles.carregando}>Carregando…</div>
 
   const tem = (papel: Session['papeis'][number]) => session.papeis.includes(papel)

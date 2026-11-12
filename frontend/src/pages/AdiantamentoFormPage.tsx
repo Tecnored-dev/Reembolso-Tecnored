@@ -42,7 +42,7 @@ export default function AdiantamentoFormPage() {
   const [inicio, setInicio] = useState('')
   const [fim, setFim] = useState('')
   const [descricao, setDescricao] = useState('')
-  const [empresa, setEmpresa] = useState('')
+  const [empresaEscolhida, setEmpresa] = useState('')
   const [gestor, setGestor] = useState('')
   const [valorPedido, setValorPedido] = useState('')
   const [erro, setErro] = useState<string | null>(null)
@@ -57,10 +57,9 @@ export default function AdiantamentoFormPage() {
   }, [])
 
   // Só uma empresa de débito ativa (hoje, só a Tecnored): já vem escolhida.
-  useEffect(() => {
-    if (!corrigindo && cadastros?.empresas.length === 1)
-      setEmpresa(String(cadastros.empresas[0].id))
-  }, [cadastros, corrigindo])
+  const empresa =
+    empresaEscolhida ||
+    (!corrigindo && cadastros?.empresas.length === 1 ? String(cadastros.empresas[0].id) : '')
 
   useEffect(() => {
     if (!id || !cadastros) return

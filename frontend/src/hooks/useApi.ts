@@ -1,46 +1,43 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect } from 'react'
 import { api } from '@/services/api'
-import type { AxiosRequestConfig } from 'axios'
+import { mensagemErro } from '@/utils'
 
 // ---------------------------------------------------------------------------
 // useApi — hook genérico para requisições GET
 //
 // Uso:
-//   const { data, loading, error, refetch } = useApi<MeuTipo>('/meu-endpoint')
+//   const { data, loading, error } = useApi<MeuTipo>('/meu-endpoint')
+//
+// O resultado fica guardado junto com a URL que o gerou: ao trocar de URL
+// (ex.: outro escopo na lista), "loading" volta a ser true na hora e a resposta
+// antiga não aparece por cima da nova (a requisição anterior é cancelada).
 // ---------------------------------------------------------------------------
 interface UseApiResult<T> {
   data: T | null
   loading: boolean
   error: string | null
-  refetch: () => void
 }
 
-export function useApi<T>(
-  url: string,
-  config?: AxiosRequestConfig
-): UseApiResult<T> {
-  const [data, setData] = useState<T | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+interface Resultado<T> {
+  url: string
+  data: T | null
+  error: string | null
+}
 
-  const fetchData = useCallback(() => {
-    setLoading(true)
-    setError(null)
-
-    api
-      .get<T>(url, config)
-      .then((res) => setData(res.data))
-      .catch((err) => {
-        const message =
-          err.response?.data?.detail ?? err.message ?? 'Erro desconhecido'
-        setError(message)
-      })
-      .finally(() => setLoading(false))
-  }, [url]) // eslint-disable-line react-hooks/exhaustive-deps
+export function useApi<T>(url: string): UseApiResult<T> {
+  const [resultado, setResultado] = useState<Resultado<T> | null>(null)
 
   useEffect(() => {
-    fetchData()
-  }, [fetchData])
+    const controle = new AbortController()
+    api
+      .get<T>(url, { signal: controle.signal })
+      .then((res) => setResultado({ url, data: res.data, error: null }))
+      .catch((err) => {
+        if (!controle.signal.aborted) setResultado({ url, data: null, error: mensagemErro(err) })
+      })
+    return () => controle.abort()
+  }, [url])
 
-  return { data, loading, error, refetch: fetchData }
+  const atual = resultado?.url === url ? resultado : null
+  return { data: atual?.data ?? null, loading: atual === null, error: atual?.error ?? null }
 }

@@ -66,7 +66,7 @@ updates:
       - "dependabot"
 
   # -------------------------------------------------------------------------
-  # Docker — imagens base do Dockerfile do frontend (node:20-alpine, nginx:alpine)
+  # Docker — imagens base do Dockerfile do frontend (node:22-alpine, nginx:alpine)
   # -------------------------------------------------------------------------
   - package-ecosystem: "docker"
     directory: "/frontend"          # pasta onde está o Dockerfile

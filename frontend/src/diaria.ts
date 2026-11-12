@@ -13,7 +13,7 @@ export interface LinhaDiariaForm {
 export const novaLinhaDiaria = (): LinhaDiariaForm => ({ tipo: 'integral', quantidade: '1', valor: '' })
 
 /** Valor de uma diária da linha (NaN enquanto a parcial não tem valor válido). */
-export function valorUnitario(linha: LinhaDiariaForm, valorDiaria: number): number {
+function valorUnitario(linha: LinhaDiariaForm, valorDiaria: number): number {
   return linha.tipo === 'integral' ? valorDiaria : lerValor(linha.valor)
 }
 

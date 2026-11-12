@@ -33,3 +33,13 @@ describe('emAndamento', () => {
     expect(emAndamento('cancelado')).toBe(false)
   })
 })
+
+describe('diasDesde com data da API (UTC sem fuso)', () => {
+  it('lê como UTC, não como horário local', () => {
+    // 5 dias e 1 hora depois, em UTC: em qualquer fuso continua sendo 5 dias.
+    const agora = new Date('2026-10-11T15:00:00Z')
+    expect(diasDesde('2026-10-06T14:00:00', agora)).toBe(5)
+    expect(diasDesde('2026-10-06T14:00:00.123456', agora)).toBe(5)
+    expect(diasDesde('2026-10-06T14:00:00+00:00', agora)).toBe(5)
+  })
+})
