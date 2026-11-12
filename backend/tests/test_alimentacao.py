@@ -476,3 +476,20 @@ def test_cadastros_trazem_motivos_e_limite(cenario):
     assert dados["motivos"][0] == "Despesas cartório" and "Visita técnica" in dados["motivos"]
     assert dados["limite_alimentacao_dia"] == "40.00"
     assert "locais_refeicao" not in dados
+
+
+def test_anexo_com_nome_acentuado_e_emoji_baixa(cenario):
+    """Nome fora do latin-1 ia cru no Content-Disposition e o download dava 500."""
+    nome = "Almoço – café ☕.jpg"  # noqa: RUF001 (o travessão quebrava o download)
+    sol = enviar(cenario, arquivo=(nome, JPG, "image/jpeg")).json()
+    url = f"/api/solicitacoes/{sol['id']}/despesas/{sol['despesas'][0]['id']}/arquivo"
+    r = cenario.get(url)
+    assert r.status_code == 200 and r.content == JPG
+    disp = r.headers["content-disposition"]
+    assert "filename*=UTF-8''Almo%C3%A7o%20%E2%80%93%20caf%C3%A9%20%E2%98%95.jpg" in disp
+
+
+def test_arquivos_demais_sao_recusados_antes_de_ler(cenario):
+    arquivos = [("arquivos", (f"n{i}.jpg", JPG, "image/jpeg")) for i in range(31)]
+    r = enviar(cenario, arquivos=arquivos)
+    assert r.status_code == 400 and "Máximo de 30 arquivos" in r.json()["detail"]

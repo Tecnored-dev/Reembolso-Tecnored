@@ -29,10 +29,6 @@ export interface AppConfig {
   leitura_comprovante: boolean
 }
 
-export interface ApiError {
-  detail: string
-}
-
 // ===========================================================================
 // Reembolso
 // ===========================================================================

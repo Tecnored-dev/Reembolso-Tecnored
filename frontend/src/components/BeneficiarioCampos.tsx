@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { precisaDosDados, type BeneficiarioForm } from '@/beneficiario'
 import { api } from '@/services/api'
 import ui from '@/styles/ui.module.css'
@@ -13,22 +13,31 @@ interface Props {
 // sistema; se a pessoa nunca entrou, pede nome e matrícula. O centro de custo
 // é o do pedido (Thais, 15/10).
 export default function BeneficiarioCampos({ valor, onChange }: Props) {
-  const [sugestoes, setSugestoes] = useState<UsuarioBusca[]>([])
+  const [encontrados, setSugestoes] = useState<UsuarioBusca[]>([])
   const termo = valor.email.trim()
 
+  const buscando = valor.ativo && termo.length >= 2
+  // Fora da busca (desligado ou termo curto) não sobra sugestão antiga na tela.
+  const sugestoes = useMemo(() => (buscando ? encontrados : []), [buscando, encontrados])
+
+  // Busca com espera de 300 ms; ao digitar de novo, a busca anterior é cancelada
+  // (uma resposta atrasada não sobrescreve as sugestões do termo atual).
   useEffect(() => {
-    if (!valor.ativo || termo.length < 2) {
-      setSugestoes([])
-      return
-    }
+    if (!buscando) return
+    const controle = new AbortController()
     const espera = setTimeout(() => {
       api
-        .get<UsuarioBusca[]>('/api/usuarios', { params: { busca: termo } })
+        .get<UsuarioBusca[]>('/api/usuarios', { params: { busca: termo }, signal: controle.signal })
         .then((r) => setSugestoes(r.data))
-        .catch(() => setSugestoes([]))
+        .catch(() => {
+          if (!controle.signal.aborted) setSugestoes([])
+        })
     }, 300)
-    return () => clearTimeout(espera)
-  }, [valor.ativo, termo])
+    return () => {
+      clearTimeout(espera)
+      controle.abort()
+    }
+  }, [buscando, termo])
 
   function mudarEmail(texto: string) {
     const conhecido = sugestoes.find((u) => u.email === texto.trim().toLowerCase()) ?? null

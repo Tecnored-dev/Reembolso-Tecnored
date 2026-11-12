@@ -287,22 +287,22 @@ def interessados(sol: Solicitacao) -> list[str]:
 
 
 def pode_ver(sol: Solicitacao, usuario: Usuario) -> bool:
-    return (
-        eh_dono(sol, usuario)
-        or sol.gestor_email == usuario.email
-        or usuario.tem(FINANCEIRO)
-        or usuario.tem(ADMIN)
-    )
+    if eh_dono(sol, usuario) or sol.gestor_email == usuario.email:
+        return True
+    # Financeiro/admin veem tudo, mas usuário de teste só pedido de teste e o
+    # real só o real (as filas gerais de `listar` já separam do mesmo jeito).
+    mesmo_mundo = eh_teste(sol.solicitante_email) == eh_teste(usuario.email)
+    return mesmo_mundo and (usuario.tem(FINANCEIRO) or usuario.tem(ADMIN))
 
 
-def obter(db: Session, usuario: Usuario, sol_id: int) -> Solicitacao:
-    sol = db.get(Solicitacao, sol_id)
+def obter(db: Session, usuario: Usuario, sol_id: int, *, travar: bool = False) -> Solicitacao:
+    """Carrega o pedido. `travar=True` (mudanças de status) usa SELECT ... FOR UPDATE:
+    duas ações simultâneas no mesmo pedido esperam uma pela outra e a segunda já
+    vê o status novo (no SQLite dos testes o FOR UPDATE é ignorado)."""
+    sol = db.get(Solicitacao, sol_id, with_for_update=travar or None)
     if sol is None or not pode_ver(sol, usuario):
         raise NaoEncontrado()
     return sol
-
-
-ESCOPOS = ("minhas", "conferencia", "aprovacao", "pagamento", "todas")
 
 
 def listar(db: Session, usuario: Usuario, escopo: str) -> list[Solicitacao]:
@@ -486,7 +486,7 @@ def reenviar(
     """Correção de um reembolso de despesas devolvido. A lista de notas enviada
     substitui a anterior (como na viagem): com `id` mantém, sem `id` é nova, e as
     que não vierem saem. Vale também para pedidos antigos, de uma nota só."""
-    sol = obter(db, usuario, sol_id)
+    sol = obter(db, usuario, sol_id, travar=True)
     _exigir(eh_dono(sol, usuario), "Só quem pediu pode corrigir.")
     _exigir_status(sol, DEVOLVIDO)
     if sol.tipo not in TIPOS_DESPESAS:
@@ -662,7 +662,7 @@ def reenviar_diaria(
     dados: DadosDiaria,
 ) -> Solicitacao:
     """Correção de uma diária devolvida: as linhas enviadas substituem as anteriores."""
-    sol = obter(db, usuario, sol_id)
+    sol = obter(db, usuario, sol_id, travar=True)
     _exigir(eh_dono(sol, usuario), "Só quem pediu pode corrigir.")
     _exigir_status(sol, DEVOLVIDO)
     if sol.tipo != TIPO_VIAGEM:
@@ -1007,7 +1007,7 @@ def reenviar_adiantamento(
     """Correção de um pedido devolvido antes de 15/10 (o gestor devolvia).
 
     Hoje o gestor só aprova ou recusa; fica para os pedidos antigos."""
-    sol = obter(db, usuario, sol_id)
+    sol = obter(db, usuario, sol_id, travar=True)
     _exigir(eh_dono(sol, usuario), "Só quem pediu pode corrigir.")
     _exigir_status(sol, DEVOLVIDO)
     if sol.tipo != TIPO_ADIANTAMENTO:
@@ -1051,7 +1051,7 @@ def enviar_prestacao(
     Na correção vale a mesma regra do reembolso de viagem: notas com `id` são
     mantidas, sem `id` são novas, e as que não vierem são removidas.
     """
-    sol = obter(db, usuario, sol_id)
+    sol = obter(db, usuario, sol_id, travar=True)
     _exigir(eh_dono(sol, usuario), "Só quem pediu presta contas.")
     if sol.tipo != TIPO_ADIANTAMENTO:
         raise RegraNegocio("Esta solicitação não é de adiantamento.")
@@ -1114,7 +1114,7 @@ def enviar_comprovante(
     arquivo: arquivos.ArquivoValidado,
 ) -> Solicitacao:
     """Comprovante da transferência da sobra (os dados bancários a Thais passa por fora)."""
-    sol = obter(db, usuario, sol_id)
+    sol = obter(db, usuario, sol_id, travar=True)
     _exigir(eh_dono(sol, usuario), "Só quem pediu envia o comprovante.")
     _exigir_status(sol, AGUARDANDO_DEVOLUCAO)
     if data_transferencia > date.today():
@@ -1179,7 +1179,7 @@ def confirmar_devolucao(
     comentario: str | None,
 ) -> Solicitacao:
     """A Thais confirma que a sobra caiu na conta (encerra) ou recusa o comprovante."""
-    sol = obter(db, usuario, sol_id)
+    sol = obter(db, usuario, sol_id, travar=True)
     _exigir(usuario.tem(FINANCEIRO), "Só o financeiro confirma a devolução.")
     _exigir(not eh_dono(sol, usuario), OUTRO_FINANCEIRO)
     _exigir_status(sol, DEVOLUCAO_EM_CONFERENCIA)
@@ -1449,7 +1449,7 @@ def conferir(
     aprovar: bool,
     comentario: str | None,
 ) -> Solicitacao:
-    sol = obter(db, usuario, sol_id)
+    sol = obter(db, usuario, sol_id, travar=True)
     _exigir(usuario.tem(FINANCEIRO), "Só o financeiro confere.")
     _exigir(not eh_dono(sol, usuario), OUTRO_FINANCEIRO)
     if sol.status == PRESTACAO_EM_CONFERENCIA:
@@ -1487,7 +1487,7 @@ def decidir_gestor(
     aprovar: bool,
     comentario: str | None,
 ) -> Solicitacao:
-    sol = obter(db, usuario, sol_id)
+    sol = obter(db, usuario, sol_id, travar=True)
     _exigir(
         usuario.tem(GESTOR) and sol.gestor_email == usuario.email,
         "Só o gestor escolhido pode aprovar.",
@@ -1524,7 +1524,7 @@ def decidir_gestor(
 def pagar(
     db: Session, settings: Settings, usuario: Usuario, sol_id: int, data_pagamento: date
 ) -> Solicitacao:
-    sol = obter(db, usuario, sol_id)
+    sol = obter(db, usuario, sol_id, travar=True)
     _exigir(usuario.tem(FINANCEIRO), "Só o financeiro registra pagamento.")
     if sol.status == DIFERENCA_AGUARDANDO_PAGAMENTO:
         return _pagar_diferenca(db, settings, sol, usuario, data_pagamento)
@@ -1563,7 +1563,10 @@ def processar_expiracoes(db: Session, settings: Settings, agora: datetime | None
     Idempotente."""
     agora = agora or agora_utc()
     lembretes = cancelamentos = 0
-    devolvidas = db.scalars(select(Solicitacao).where(Solicitacao.status == DEVOLVIDO)).all()
+    # skip_locked: pedido sendo reenviado agora fica para a próxima rodada.
+    devolvidas = db.scalars(
+        select(Solicitacao).where(Solicitacao.status == DEVOLVIDO).with_for_update(skip_locked=True)
+    ).all()
     for sol in devolvidas:
         parada = agora - sol.ultima_movimentacao_em
         if parada >= timedelta(days=DIAS_EXPIRACAO_DEVOLVIDO):
@@ -1775,6 +1778,9 @@ def _pessoa_do_pedido(
     email = beneficiario.email.strip().lower()
     if not EMAIL_VALIDO.match(email) or len(email) > 254:
         raise RegraNegocio("E-mail da pessoa do pedido inválido.")
+    if eh_teste(email) != eh_teste(usuario.email):
+        # Painel de teste: pedido de teste nunca nasce para pessoa real (nem o contrário).
+        raise RegraNegocio("Essa pessoa não pode ser escolhida neste ambiente.")
     cadastro = db.scalar(select(CadastroUsuario).where(CadastroUsuario.email == email))
     eh_gestor = (cadastro is not None and GESTOR in cadastro.lista_papeis) or (
         gestores.buscar(db, settings, email) is not None

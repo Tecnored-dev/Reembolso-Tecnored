@@ -15,7 +15,6 @@
   --color-tecnored-primary-light: #1a9090; /* só decorativo, nunca texto */
   --color-tecnored-accent:        #008b5c;
   --color-tecnored-accent-dark:   #006e48;
-  --color-tecnored-tint:          #87b296; /* só decorativo, nunca texto */
   --color-tecnored-bg-soft:       #e6f3f1;
   --color-tecnored-bg-mute:       #f4f9f8;
 
@@ -54,8 +53,6 @@
 
   /* Apelidos antigos (usados nas telas que ainda não foram redesenhadas) */
   --color-primary:    var(--color-tecnored-primary);
-  --color-primary-dk: var(--color-tecnored-primary-dark);
-  --color-bg:         var(--color-tecnored-bg-mute);
 
   --font-sans: 'Source Sans 3', 'Segoe UI', system-ui, -apple-system, Roboto, sans-serif;
 
@@ -78,7 +75,6 @@
 
   --alvo-toque: 44px;
   --conteudo-max: 1040px;
-  --texto-max: 640px;
 }
 
 html {

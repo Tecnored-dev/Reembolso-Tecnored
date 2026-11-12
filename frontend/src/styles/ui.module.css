@@ -39,19 +39,6 @@
   line-height: 20px;
 }
 
-.legenda {
-  font-size: 12px;
-  line-height: 16px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--color-text-muted);
-}
-
-.num {
-  font-variant-numeric: tabular-nums;
-}
-
 /* ----- Formulário ------------------------------------------------------- */
 .form {
   display: grid;
@@ -222,8 +209,7 @@
 /* ----- Avisos ----------------------------------------------------------- */
 .erro,
 .aviso,
-.info,
-.sucesso {
+.info {
   border-radius: var(--radius-md);
   padding: var(--space-3) 14px;
   font-size: 15px;
@@ -243,11 +229,6 @@
 .info {
   background: var(--color-tecnored-bg-soft);
   color: var(--color-tecnored-primary-dark);
-}
-
-.sucesso {
-  background: var(--color-success-bg);
-  color: var(--color-tecnored-accent-dark);
 }
 
 /* ----- Tabela ----------------------------------------------------------- */

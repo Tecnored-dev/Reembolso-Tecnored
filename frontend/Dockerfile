@@ -12,9 +12,7 @@ RUN npm ci
 # Argumentos de build — variáveis VITE_ são injetadas em tempo de build
 # e ficam embutidas no bundle JS gerado
 ARG VITE_API_URL=http://localhost:8081
-ARG VITE_APP_ENV=local
 ENV VITE_API_URL=$VITE_API_URL
-ENV VITE_APP_ENV=$VITE_APP_ENV
 
 # Copia o restante do código e gera o build de produção
 COPY . .

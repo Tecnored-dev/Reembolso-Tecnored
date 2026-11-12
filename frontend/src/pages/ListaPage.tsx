@@ -53,7 +53,7 @@ function Parado({ s, className }: { s: SolicitacaoResumo; className: string }) {
   )
 }
 
-export type Escopo = 'minhas' | 'conferencia' | 'aprovacao' | 'pagamento' | 'todas'
+type Escopo = 'minhas' | 'conferencia' | 'aprovacao' | 'pagamento' | 'todas'
 
 interface Props {
   escopo: Escopo

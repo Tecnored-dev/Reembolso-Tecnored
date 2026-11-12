@@ -36,7 +36,6 @@ const DESENHOS = {
       <circle cx="12" cy="13.5" r="3.5" />
     </>
   ),
-  clipe: <path d="M20 11.5l-8 8a5 5 0 01-7-7l8.5-8.5a3.3 3.3 0 014.7 4.7l-8.3 8.3a1.7 1.7 0 01-2.4-2.4L15 7" />,
   alerta: <path d="M12 4l9 16H3zM12 10v4.5M12 17.5v.01" />,
   info: (
     <>
@@ -45,8 +44,6 @@ const DESENHOS = {
     </>
   ),
   mais: <path d="M12 5v14M5 12h14" />,
-  'seta-direita': <path d="M5 12h14M13 6l6 6-6 6" />,
-  'seta-esquerda': <path d="M19 12H5M11 6l-6 6 6 6" />,
   talher: <path d="M7 3v18M4.5 3v5a2.5 2.5 0 005 0V3M17 21V3c-2 0-3.5 2.5-3.5 6s1.5 4 3.5 4" />,
   mala: (
     <>
@@ -56,20 +53,6 @@ const DESENHOS = {
   ),
   caixa: <path d="M4 8l8-4 8 4v9l-8 4-8-4zM4 8l8 4 8-4M12 12v9" />,
   sair: <path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h10" />,
-  lixo: <path d="M5 7h14M10 7V4.5h4V7M7 7l1 13h8l1-13" />,
-  olho: (
-    <>
-      <path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z" />
-      <circle cx="12" cy="12" r="3" />
-    </>
-  ),
-  filtro: <path d="M4 5h16l-6 7.5V19l-4 1.5v-8z" />,
-  calendario: (
-    <>
-      <rect x="4" y="5.5" width="16" height="14.5" rx="2" />
-      <path d="M4 10h16M8.5 3.5v4M15.5 3.5v4" />
-    </>
-  ),
 } satisfies Record<string, ReactNode>
 
 export type NomeIcone = keyof typeof DESENHOS

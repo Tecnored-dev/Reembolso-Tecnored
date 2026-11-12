@@ -242,3 +242,38 @@ def test_notas_da_demonstracao_tem_cupom_legivel():
         assert arq.tipo == "image/png" and len(arq.conteudo) > 5000, valor
     # valor sem imagem própria cai no PNG de reserva, sem quebrar a demonstração
     assert painel._arquivo_nota(Decimal("1.23")).tipo == "image/png"
+
+
+def test_financeiro_de_teste_nao_abre_nem_mexe_em_pedido_real(ligado):
+    """As filas já separavam; o acesso direto pelo id também precisa separar."""
+    from tests.test_alimentacao import criar
+
+    real = criar(ligado)
+    entrar(ligado, ADMIN, "", "Rizzo")
+    ver_como(ligado, FIN_TESTE)
+    assert ligado.get(f"/api/solicitacoes/{real['id']}").status_code == 404
+    r = ligado.post(f"/api/solicitacoes/{real['id']}/conferir", json={"aprovar": True})
+    assert r.status_code == 404
+
+
+def test_usuario_de_teste_nao_cria_pedido_para_pessoa_real(ligado):
+    from tests.test_alimentacao import enviar
+
+    ver_como(ligado, COLAB_TESTE)
+    r = enviar(
+        ligado,
+        gestor=GESTOR_TESTE,
+        beneficiario_email="thais@tecnored.com.br",
+        beneficiario_nome="Thais",
+        beneficiario_matricula="1",
+    )
+    assert r.status_code == 400 and "neste ambiente" in r.json()["detail"]
+
+
+def test_sessao_de_teste_cai_quando_o_painel_e_desligado(ligado, settings):
+    from app.main import app
+
+    ver_como(ligado, FIN_TESTE)
+    assert ligado.get("/api/session").json()["email"] == FIN_TESTE
+    app.dependency_overrides[get_settings] = lambda: settings  # painel desligado
+    assert ligado.get("/api/session").status_code == 401

@@ -54,16 +54,12 @@ type Leitura =
 
 // Miniatura da imagem escolhida, para o colaborador conferir a foto antes de enviar.
 function Miniatura({ arquivo }: { arquivo: File }) {
-  const [url, setUrl] = useState<string | null>(null)
-  useEffect(() => {
-    if (!arquivo.type.startsWith('image/')) {
-      setUrl(null)
-      return
-    }
-    const novo = URL.createObjectURL(arquivo)
-    setUrl(novo)
-    return () => URL.revokeObjectURL(novo)
-  }, [arquivo])
+  // A URL nasce junto com o arquivo e é liberada quando ele sai da tela ou é trocado.
+  const url = useMemo(
+    () => (arquivo.type.startsWith('image/') ? URL.createObjectURL(arquivo) : null),
+    [arquivo]
+  )
+  useEffect(() => () => (url ? URL.revokeObjectURL(url) : undefined), [url])
   if (!url) return <span className={ui.ajuda}>PDF escolhido: {arquivo.name}</span>
   return <img src={url} alt="Prévia da nota" className={styles.miniatura} />
 }

@@ -24,7 +24,8 @@ from dataclasses import dataclass
 
 import httpx
 from msal import ConfidentialClientApplication
-from sqlalchemy import delete, select
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.auth.papeis import GESTOR
@@ -92,10 +93,24 @@ def sincronizar_no_login(db: Session, settings: Settings, token_usuario: str, ag
         return False
     unicos = {g.email: g for g in membros}
     log.warning("Grupo de gestores lido no login: %s membro(s).", len(unicos))
-    db.execute(delete(GestorGrupo))
-    db.add_all(
-        GestorGrupo(email=g.email, nome=g.nome, atualizado_em=agora) for g in unicos.values()
-    )
+    # Atualiza só a diferença (em vez de apagar e regravar tudo a cada login) e num
+    # savepoint: dois logins ao mesmo tempo inserindo o mesmo gestor novo não podem
+    # derrubar o login de ninguém; quem perde a corrida só deixa para o outro.
+    try:
+        with db.begin_nested():
+            atuais = {g.email: g for g in db.scalars(select(GestorGrupo)).all()}
+            for email, antigo in atuais.items():
+                if email not in unicos:
+                    db.delete(antigo)
+            for email, g in unicos.items():
+                if email in atuais:
+                    atuais[email].nome, atuais[email].atualizado_em = g.nome, agora
+                else:
+                    db.add(GestorGrupo(email=email, nome=g.nome, atualizado_em=agora))
+            db.flush()
+    except IntegrityError:
+        log.info("Lista de gestores atualizada por outro login ao mesmo tempo; mantida.")
+        return False
     _cache.clear()
     return True
 

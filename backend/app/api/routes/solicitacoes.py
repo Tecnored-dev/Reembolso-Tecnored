@@ -6,6 +6,7 @@ import json
 from dataclasses import replace
 from datetime import date
 from decimal import Decimal
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile
 from fastapi.responses import Response
@@ -21,6 +22,7 @@ from app.config import (
     CATEGORIAS_ANTIGAS,
     CATEGORIAS_VIAGEM,
     LOCAIS_REFEICAO,
+    MAX_DESPESAS_VIAGEM,
     VALOR_DIARIA,
     Settings,
     get_settings,
@@ -354,6 +356,10 @@ def _itens(despesas: str) -> tuple[fluxo.ItemViagem, ...]:
 
 
 async def _arquivos(uploads: list[UploadFile] | None) -> list[servico_arquivos.ArquivoValidado]:
+    # Conta antes de ler: cada arquivo vai para a memória (até 10 MB), então um
+    # envio com centenas de arquivos derrubaria o container.
+    if len(uploads or []) > MAX_DESPESAS_VIAGEM:
+        raise RegraNegocio(f"Máximo de {MAX_DESPESAS_VIAGEM} arquivos por envio.")
     validados = []
     for n, upload in enumerate(uploads or [], start=1):
         if not upload.filename:
@@ -483,12 +489,17 @@ def baixar_arquivo(
         conteudo = armazenamento.abrir(despesa.arquivo_chave)
     except ArquivoNaoEncontrado:
         raise NaoEncontrado() from None
-    nome = (despesa.arquivo_nome or "nota").replace('"', "")
+    nome = despesa.arquivo_nome or "nota"
+    # Cabeçalho HTTP é latin-1: nome ASCII de reserva + filename* em UTF-8 (RFC 6266),
+    # senão um nome com emoji ou travessão derruba o download com erro 500.
+    ascii_nome = nome.encode("ascii", "replace").decode().replace('"', "").replace("?", "_")
     return Response(
         conteudo,
         media_type=despesa.arquivo_tipo,
         headers={
-            "Content-Disposition": f'inline; filename="{nome}"',
+            "Content-Disposition": (
+                f"inline; filename=\"{ascii_nome}\"; filename*=UTF-8''{quote(nome, safe='')}"
+            ),
             "X-Content-Type-Options": "nosniff",
             "Cache-Control": "private, no-store",
         },

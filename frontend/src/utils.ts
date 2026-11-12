@@ -87,7 +87,7 @@ export function caminhoInterno(pedido: string | null, padrao = '/inicio'): strin
   return pedido
 }
 
-export interface NotaParaAlerta {
+interface NotaParaAlerta {
   categoria: string
   data: string
   valor: string

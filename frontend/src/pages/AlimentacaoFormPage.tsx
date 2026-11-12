@@ -67,8 +67,8 @@ export default function AlimentacaoFormPage({ tipo: tipoPedido = 'alimentacao' }
   const [escolhido, setEscolhido] = useState<TipoDespesas>(tipoPedido)
   const [descricao, setDescricao] = useState('')
   const [motivo, setMotivo] = useState('')
-  const [empresa, setEmpresa] = useState('')
-  const [centroCusto, setCentroCusto] = useState('')
+  const [empresaEscolhida, setEmpresa] = useState('')
+  const [centroCustoEscolhido, setCentroCusto] = useState('')
   const [gestor, setGestor] = useState('')
   const [notas, setNotas] = useState<NotaForm[]>(() => [novaNota()])
   const [erro, setErro] = useState<string | null>(null)
@@ -82,19 +82,20 @@ export default function AlimentacaoFormPage({ tipo: tipoPedido = 'alimentacao' }
 
   // Pedido novo: ao trocar o tipo, a categoria que o novo tipo não aceita é limpa
   // (e o valor calculado da quilometragem, que depende dela).
-  useEffect(() => {
-    if (corrigindo || !categoriasDoTipo) return
-    const aceitas = categoriasDoTipo.map((c) => c.id)
+  function trocarTipo(novo: TipoDespesas) {
+    setEscolhido(novo)
+    const categorias =
+      novo === 'diversas' ? cadastros?.categorias_diversas : cadastros?.categorias_alimentacao
+    if (!categorias) return
+    const aceitas = categorias.map((c) => c.id)
     setNotas((atual) =>
-      atual.some((n) => n.categoria && !aceitas.includes(n.categoria))
-        ? atual.map((n) =>
-            n.categoria && !aceitas.includes(n.categoria)
-              ? { ...n, categoria: '', valor: n.categoria === 'quilometragem' ? '' : n.valor }
-              : n
-          )
-        : atual
+      atual.map((n) =>
+        n.categoria && !aceitas.includes(n.categoria)
+          ? { ...n, categoria: '', valor: n.categoria === 'quilometragem' ? '' : n.valor }
+          : n
+      )
     )
-  }, [categoriasDoTipo, corrigindo])
+  }
 
   // A lista de gestores também diz se a pessoa do pedido é gestora.
   useEffect(() => {
@@ -105,16 +106,14 @@ export default function AlimentacaoFormPage({ tipo: tipoPedido = 'alimentacao' }
   }, [])
 
   // Só uma empresa de débito ativa (hoje, só a Tecnored): já vem escolhida.
-  useEffect(() => {
-    if (!corrigindo && cadastros?.empresas.length === 1)
-      setEmpresa(String(cadastros.empresas[0].id))
-  }, [cadastros, corrigindo])
+  const empresa =
+    empresaEscolhida ||
+    (!corrigindo && cadastros?.empresas.length === 1 ? String(cadastros.empresas[0].id) : '')
 
   // Pedido novo: o centro de custo vem com o último usado (dá para trocar).
-  useEffect(() => {
-    if (!corrigindo && cadastros)
-      setCentroCusto((atual) => atual || centroCustoInicial(cadastros.centros_custo, perfil, null))
-  }, [cadastros, corrigindo, perfil])
+  const centroCusto =
+    centroCustoEscolhido ||
+    (!corrigindo && cadastros ? centroCustoInicial(cadastros.centros_custo, perfil, null) : '')
 
   // Correção: carrega o que foi enviado para editar em cima.
   useEffect(() => {
@@ -209,7 +208,7 @@ export default function AlimentacaoFormPage({ tipo: tipoPedido = 'alimentacao' }
                   name="tipo"
                   value={t.id}
                   checked={escolhido === t.id}
-                  onChange={() => setEscolhido(t.id)}
+                  onChange={() => trocarTipo(t.id)}
                 />{' '}
                 {t.rotulo}
               </label>

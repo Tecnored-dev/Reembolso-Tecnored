@@ -21,7 +21,7 @@ export const CURTO: Record<Status, string> = {
 }
 
 // A cor diz com quem está o pedido agora; o ícone garante que não dependa só da cor.
-export type Familia = 'voce' | 'financeiro' | 'gestor' | 'concluido' | 'cancelado' | 'recusado'
+type Familia = 'voce' | 'financeiro' | 'gestor' | 'concluido' | 'cancelado' | 'recusado'
 
 export const VISUAL: Record<Status, { familia: Familia; icone: NomeIcone }> = {
   em_conferencia: { familia: 'financeiro', icone: 'lupa' },

@@ -1,0 +1,11 @@
+# node_modules do host (Windows) não pode entrar: sobrescreveria o do `npm ci`
+# do container (binários nativos de outro sistema) e deixaria o build lento.
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo
+*.log
+.env
+.env.*
+**/*.test.ts
+**/*.test.tsx

@@ -34,9 +34,9 @@ COPY . .
 
 # /data: volume com os arquivos das notas enquanto o storage for "local"
 # (sobrescrito pelo volume em runtime).
-RUN mkdir -p /data
-
-RUN useradd -m appuser && chown -R appuser:appuser /app /data
+# O código fica do root (só leitura para a aplicação) e só o /data é do appuser:
+# um chown -R em /app duplicaria todo o código numa camada nova da imagem.
+RUN useradd -m appuser && mkdir -p /data && chown appuser:appuser /data
 USER appuser
 
 EXPOSE 8000
