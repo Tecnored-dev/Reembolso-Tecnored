@@ -8,8 +8,13 @@
 # de promoção de ambiente: hml → validação → main.
 # Isso garante que atualizações sejam validadas antes de chegar em produção.
 #
-# Cada PR gerado passa pelo pipeline normalmente — o Admin avalia,
-# testa e decide se aprova ou rejeita, como qualquer outro PR.
+# Cada PR passa pelo CI (.github/workflows/ci.yml: lint, testes e build) —
+# o Admin avalia e decide se aprova ou rejeita, como qualquer outro PR.
+#
+# Para não acumular dezenas de PRs: em pip e npm as atualizações minor/patch
+# vêm juntas num PR só por mês (um deploy em hml em vez de vários). Versões
+# major continuam em PRs separados, porque podem quebrar e merecem teste à
+# parte. Alertas de segurança não esperam o mês: chegam na hora, separados.
 #
 # Documentação: https://docs.github.com/en/code-security/dependabot
 # ===========================================================================
@@ -19,14 +24,17 @@ updates:
 
   # -------------------------------------------------------------------------
   # Python — pacotes do backend/requirements.txt (FastAPI)
-  # Monitora cada pacote individualmente e abre um PR por atualização
+  # minor/patch num PR mensal agrupado; major em PR separado
   # -------------------------------------------------------------------------
   - package-ecosystem: "pip"
     directory: "/backend"           # pasta onde está o requirements.txt
     target-branch: "hml"         # PR aberto contra hml, não main
     schedule:
-      interval: "weekly"            # verifica toda semana (segunda-feira)
+      interval: "monthly"
     open-pull-requests-limit: 5     # máximo de PRs abertos simultaneamente
+    groups:
+      backend-minor-patch:
+        update-types: ["minor", "patch"]
     commit-message:
       prefix: "chore"              # título/commit vira "chore: bump X from A to B" — seção 13 do README
     labels:
@@ -35,14 +43,27 @@ updates:
 
   # -------------------------------------------------------------------------
   # npm — pacotes do frontend/package.json (React + Vite)
-  # Monitora cada pacote individualmente e abre um PR por atualização
+  # minor/patch num PR mensal agrupado; major em PR separado
   # -------------------------------------------------------------------------
   - package-ecosystem: "npm"
     directory: "/frontend"          # pasta onde está o package.json
     target-branch: "hml"
     schedule:
-      interval: "weekly"
+      interval: "monthly"
     open-pull-requests-limit: 5
+    groups:
+      frontend-minor-patch:
+        update-types: ["minor", "patch"]
+    ignore:
+      # React 19 é migração à parte: react, react-dom e @types sobem juntos.
+      - dependency-name: "react"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "react-dom"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@types/react"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@types/react-dom"
+        update-types: ["version-update:semver-major"]
     commit-message:
       prefix: "chore"
     labels:
