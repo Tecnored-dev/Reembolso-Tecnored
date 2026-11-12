@@ -14,7 +14,7 @@ export const api = axios.create({
 })
 
 // Rotas de navegação de página inteira (fluxo OAuth) — <a href>, nunca axios.
-export const API_URL = import.meta.env.VITE_API_URL ?? ''
+const API_URL = import.meta.env.VITE_API_URL ?? ''
 export const LOGIN_URL = `${API_URL}/login`
 export const LOGOUT_URL = `${API_URL}/logout`
 export const DEV_LOGIN_URL = `${API_URL}/dev/login`

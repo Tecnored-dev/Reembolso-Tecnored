@@ -7,8 +7,13 @@ trocando a sessão em memória pela sessão persistida no banco.
 
 from __future__ import annotations
 
+import asyncio
+import logging
+import secrets
+from urllib.parse import quote
+
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from msal import ConfidentialClientApplication
 from sqlalchemy.orm import Session
@@ -18,10 +23,28 @@ from app.auth.deps import definir_cookie
 from app.auth.papeis import PAPEIS_ESPECIAIS, resolver_papeis
 from app.config import Settings, get_settings
 from app.db import get_db
+from app.services import gestores
+from app.services.painel_teste import COOKIE_ADMIN
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(tags=["auth"])
 
 SCOPES = ["GroupMember.Read.All"]  # openid/profile/email são geridos pelo MSAL
+
+# Proteção contra CSRF no login (parâmetro `state` do OAuth): o /login sorteia
+# um valor, guarda num cookie curto e manda para a Microsoft; o callback só
+# aceita a volta se o valor que a Microsoft devolveu for o mesmo do cookie.
+# Sem isso, alguém poderia fazer o navegador da vítima "logar" com o código
+# de outra conta.
+COOKIE_STATE = "oauth_state"
+STATE_VALIDADE_SEGUNDOS = 600
+
+
+def _erro_login(settings: Settings, motivo: str) -> RedirectResponse:
+    resposta = RedirectResponse(f"{settings.frontend_url}/?auth_error={quote(motivo[:60])}")
+    resposta.delete_cookie(COOKIE_STATE, path="/auth/callback")
+    return resposta
 
 
 def _msal(settings: Settings) -> ConfidentialClientApplication:
@@ -36,37 +59,75 @@ def _msal(settings: Settings) -> ConfidentialClientApplication:
 def login(settings: Settings = Depends(get_settings)):
     if not settings.azure_configurado:
         return RedirectResponse(f"{settings.frontend_url}/?auth_error=azure_nao_configurado")
+    state = secrets.token_urlsafe(32)
     url = _msal(settings).get_authorization_request_url(
         scopes=SCOPES,
         redirect_uri=settings.azure_redirect_uri,
         prompt=settings.azure_login_prompt or None,
+        state=state,
     )
-    return RedirectResponse(url)
+    resposta = RedirectResponse(url)
+    resposta.set_cookie(
+        COOKIE_STATE,
+        state,
+        max_age=STATE_VALIDADE_SEGUNDOS,
+        httponly=True,
+        # Lax: o cookie volta na navegação de topo vinda da Microsoft (GET).
+        samesite="lax",
+        secure=settings.app_env != "local",
+        path="/auth/callback",
+    )
+    return resposta
+
+
+async def _grupos_do_usuario(token: str) -> list[str]:
+    """IDs dos grupos do usuário, inclusive por subgrupo (transitiveMemberOf), como a
+    lista de gestores (transitiveMembers): quem aparece como gestor ganha o papel.
+    Segue a paginação; se o Graph falhar, entra sem papéis especiais e registra."""
+    url: str | None = (
+        "https://graph.microsoft.com/v1.0/me/transitiveMemberOf/microsoft.graph.group"
+        "?$select=id&$top=999"
+    )
+    grupos: list[str] = []
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        while url:
+            resp = await client.get(url, headers={"Authorization": f"Bearer {token}"})
+            if resp.status_code != 200:
+                log.warning("Graph não devolveu os grupos do usuário (HTTP %s).", resp.status_code)
+                return grupos
+            dados = resp.json()
+            grupos += [g["id"] for g in dados.get("value", []) if g.get("id")]
+            url = dados.get("@odata.nextLink")
+    return grupos
 
 
 @router.get("/auth/callback")
 async def auth_callback(
     code: str | None = None,
     error: str | None = None,
+    state: str | None = None,
+    oauth_state: str | None = Cookie(default=None),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ):
     if error or not code or not settings.azure_configurado:
-        return RedirectResponse(f"{settings.frontend_url}/?auth_error={error or 'unknown'}")
+        return _erro_login(settings, error or "unknown")
+    if not (state and oauth_state and secrets.compare_digest(state, oauth_state)):
+        return _erro_login(settings, "state_invalido")
 
     result = _msal(settings).acquire_token_by_authorization_code(
         code=code, scopes=SCOPES, redirect_uri=settings.azure_redirect_uri
     )
     if "error" in result:
-        return RedirectResponse(f"{settings.frontend_url}/?auth_error={result.get('error')}")
+        return _erro_login(settings, str(result.get("error")))
 
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(
-            "https://graph.microsoft.com/v1.0/me/memberOf",
-            headers={"Authorization": f"Bearer {result['access_token']}"},
-            timeout=10.0,
-        )
-    grupos = [g["id"] for g in resp.json().get("value", []) if g.get("id")]
+    grupos = await _grupos_do_usuario(result["access_token"])
+
+    # Aproveita o token de quem está logando para atualizar a lista de gestores
+    # (permissão delegada: só dá para ler o grupo em nome de alguém logado).
+    await asyncio.to_thread(
+        gestores.sincronizar_no_login, db, settings, result["access_token"], sessoes.agora_utc()
+    )
 
     claims = result.get("id_token_claims", {})
     email = claims.get("preferred_username", "")
@@ -81,6 +142,7 @@ async def auth_callback(
     )
     response = RedirectResponse(f"{settings.frontend_url}/inicio", status_code=302)
     definir_cookie(response, token, settings)
+    response.delete_cookie(COOKIE_STATE, path="/auth/callback")
     return response
 
 
@@ -91,6 +153,9 @@ def logout(
     settings: Settings = Depends(get_settings),
 ):
     via = sessoes.encerrar_sessao(db, request.cookies.get(sessoes.COOKIE))
+    # Saiu durante o "ver como" do painel de teste: encerra também a sessão do admin
+    # guardada e apaga o cookie, para ninguém herdar o poder de admin.
+    sessoes.encerrar_sessao(db, request.cookies.get(COOKIE_ADMIN))
     destino = (
         f"https://{settings.cf_access_team_domain}/cdn-cgi/access/logout"
         if via == "cloudflare" and settings.cf_access_team_domain
@@ -98,6 +163,7 @@ def logout(
     )
     response = RedirectResponse(destino, status_code=302)
     response.delete_cookie(sessoes.COOKIE)
+    response.delete_cookie(COOKIE_ADMIN)
     return response
 
 

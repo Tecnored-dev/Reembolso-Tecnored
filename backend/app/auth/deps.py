@@ -31,6 +31,9 @@ async def usuario_opcional(
 ) -> sessoes.Usuario | None:
     """Sessão do cookie; sem cookie, tenta o SSO do Cloudflare Access."""
     usuario = sessoes.obter_usuario(db, request.cookies.get(sessoes.COOKIE))
+    if usuario and usuario.via == "teste" and not settings.painel_teste_enabled:
+        # Painel desligado: sessões "Ver como" que ainda estavam abertas param de valer.
+        usuario = None
     if usuario:
         return usuario
 

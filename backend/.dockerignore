@@ -7,3 +7,10 @@ __pycache__/
 .ruff_cache/
 .venv/
 *.db
+*.py[cod]
+.mypy_cache/
+htmlcov/
+.coverage
+# Credenciais locais nunca entram na imagem (as de hml/main vêm do Dokploy).
+.env
+.env.*

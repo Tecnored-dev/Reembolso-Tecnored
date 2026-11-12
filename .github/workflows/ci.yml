@@ -1,0 +1,55 @@
+# ===========================================================================
+# CI — roda em todo pull request (inclusive os do Dependabot) antes do merge.
+#
+# O release_deploy.yml só roda depois do push em hml/main; sem este workflow,
+# um PR podia entrar com lint quebrado ou teste falhando e só ser notado no
+# deploy. Aqui não há segredo nem deploy: só checagens.
+# ===========================================================================
+name: CI
+
+on:
+  pull_request:
+    branches: [hml, main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements*.txt
+      - run: pip install -r requirements-dev.txt
+      - run: ruff check .
+      - run: ruff format --check .
+      - run: pytest -q
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run type-check
+      - run: npm test
+      - run: npm run build

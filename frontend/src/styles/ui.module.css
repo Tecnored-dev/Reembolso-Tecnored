@@ -1,0 +1,327 @@
+/* Peças visuais compartilhadas entre as telas (cartão, campos, botões, tabela).
+   Valores do design system "Reembolso Tecnored" (ver global.css). */
+
+.card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  padding: var(--space-5);
+  margin-bottom: var(--space-4);
+}
+
+.cabecalho {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-4);
+}
+
+.titulo {
+  font-size: 24px;
+  line-height: 30px;
+  font-weight: 700;
+  text-wrap: balance;
+}
+
+.subtitulo {
+  font-size: 18px;
+  line-height: 24px;
+  font-weight: 700;
+  margin-bottom: var(--space-3);
+}
+
+.muted {
+  color: var(--color-text-muted);
+  font-size: 14px;
+  line-height: 20px;
+}
+
+/* ----- Formulário ------------------------------------------------------- */
+.form {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.grade {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--space-4);
+}
+
+.campo {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.campo label {
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 600;
+}
+
+.campo input:not([type='checkbox']):not([type='radio']),
+.campo select,
+.campo textarea {
+  font: inherit;
+  font-size: 16px; /* 16px evita o zoom automático do iPhone ao focar */
+  min-height: var(--alvo-toque);
+  padding: 9px 12px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  width: 100%;
+}
+
+.campo input:focus-visible,
+.campo select:focus-visible,
+.campo textarea:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.campo input[type='checkbox'],
+.campo input[type='radio'] {
+  width: 20px;
+  height: 20px;
+  vertical-align: -4px;
+  accent-color: var(--color-botao);
+}
+
+.campo textarea {
+  min-height: 88px;
+  resize: vertical;
+}
+
+.ajuda {
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--color-text-muted);
+}
+
+/* ----- Blocos do formulário --------------------------------------------- */
+.blocoTitulo {
+  font-size: 16px;
+  line-height: 22px;
+  font-weight: 700;
+  margin-top: var(--space-2);
+  padding-top: var(--space-5);
+  border-top: 1px solid var(--color-border);
+}
+
+/* Opção de rádio/caixa com área de toque confortável no celular. */
+.campo .opcao {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: var(--alvo-toque);
+  font-size: 16px;
+  font-weight: 400;
+}
+
+/* Total calculado na hora (diária de viagem). */
+.totalDestaque {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  border-radius: var(--radius-md);
+  padding: 14px var(--space-4);
+  background: var(--color-tecnored-bg-soft);
+  color: var(--color-tecnored-primary-dark);
+  font-weight: 600;
+}
+
+.totalDestaque strong {
+  font-size: 32px;
+  line-height: 36px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ----- Botões ------------------------------------------------------------ */
+.botoes {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.botao {
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 20px;
+  min-height: var(--alvo-toque);
+  padding: 10px 18px;
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  cursor: pointer;
+  background: var(--color-botao);
+  color: var(--color-on-botao);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  text-decoration: none;
+}
+
+.botao:hover:not(:disabled) {
+  background: var(--color-botao-hover);
+  color: var(--color-on-botao);
+  text-decoration: none;
+}
+
+.botao:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.secundario {
+  background: var(--color-surface);
+  color: var(--color-text);
+  border-color: var(--color-border-strong);
+}
+
+.secundario:hover:not(:disabled) {
+  background: var(--color-surface-sunken);
+  color: var(--color-text);
+}
+
+.perigo {
+  background: var(--color-surface);
+  color: var(--color-danger);
+  border-color: var(--color-danger);
+}
+
+.perigo:hover:not(:disabled) {
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+}
+
+/* ----- Avisos ----------------------------------------------------------- */
+.erro,
+.aviso,
+.info {
+  border-radius: var(--radius-md);
+  padding: var(--space-3) 14px;
+  font-size: 15px;
+  line-height: 22px;
+}
+
+.erro {
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+}
+
+.aviso {
+  background: var(--color-warning-bg);
+  color: var(--color-warning);
+}
+
+.info {
+  background: var(--color-tecnored-bg-soft);
+  color: var(--color-tecnored-primary-dark);
+}
+
+/* ----- Tabela ----------------------------------------------------------- */
+.tabela {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 15px;
+}
+
+.tabela th {
+  text-align: left;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.tabela td {
+  padding: 12px;
+  border-bottom: 1px solid var(--color-border);
+  vertical-align: middle;
+}
+
+.tabela tbody tr {
+  cursor: pointer;
+}
+
+.tabela tbody tr:hover {
+  background: var(--color-surface-sunken);
+}
+
+.direita {
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.vazio {
+  text-align: center;
+  padding: var(--space-12) var(--space-4);
+  color: var(--color-text-muted);
+}
+
+/* ----- Rótulo: valor ---------------------------------------------------- */
+.dados {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 14px 20px;
+}
+
+.dados dt {
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.dados dd {
+  font-size: 16px;
+}
+
+.codigo {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Colunas que somem no celular para o status caber na tela. */
+@media (max-width: 640px) {
+  .opcional {
+    display: none;
+  }
+}
+
+/* Celular: a ação principal fica numa barra fixa embaixo, na largura toda. */
+@media (max-width: 640px) {
+  .barraAcao {
+    position: sticky;
+    bottom: 0;
+    z-index: 5;
+    margin: 0 calc(-1 * var(--space-5)) calc(-1 * var(--space-5));
+    padding: var(--space-3) var(--space-5);
+    background: var(--color-surface);
+    border-top: 1px solid var(--color-border);
+    border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+    box-shadow: var(--shadow-md);
+  }
+
+  .barraAcao > * {
+    flex: 1 1 140px;
+  }
+}

@@ -12,8 +12,8 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    image: reembolso-backend-${APP_ENV}:latest
-    container_name: reembolso-backend-${APP_ENV}
+    image: reembolso-backend-${APP_ENV:-local}:latest
+    container_name: reembolso-backend-${APP_ENV:-local}
     restart: unless-stopped
     environment:
       - APP_ENV=${APP_ENV:-local}
@@ -33,10 +33,17 @@ services:
       - FRONTEND_URL=${FRONTEND_URL:-http://localhost:8080}
       # Só em LOCAL. A API se recusa a subir com isso ligado em hml/main.
       - DEV_LOGIN_ENABLED=${DEV_LOGIN_ENABLED:-false}
+      # Painel de teste ("Ver como"): só admin, só em local/hml; a API se recusa a
+      # subir com isso ligado na main. PAINEL_TESTE_ADMINS = e-mails separados por vírgula.
+      - PAINEL_TESTE_ENABLED=${PAINEL_TESTE_ENABLED:-false}
+      - PAINEL_TESTE_ADMINS=${PAINEL_TESTE_ADMINS:-}
       # Onde ficam os arquivos das notas: "local" (volume /data) por enquanto;
       # S3 ou SharePoint quando a TI decidir.
       - STORAGE_BACKEND=${STORAGE_BACKEND:-local}
       - STORAGE_LOCAL_DIR=${STORAGE_LOCAL_DIR:-/data/arquivos}
+      - TAREFAS_AUTOMATICAS=${TAREFAS_AUTOMATICAS:-true}
+      # Valor pago por km rodado (reembolso de quilometragem), em reais.
+      - VALOR_KM=${VALOR_KM:-1.00}
     volumes:
       - reembolso_data:/data
     networks:
@@ -60,9 +67,8 @@ services:
       dockerfile: Dockerfile
       args:
         - VITE_API_URL=${VITE_API_URL:-http://localhost:8081}
-        - VITE_APP_ENV=${APP_ENV:-local}
-    image: reembolso-frontend-${APP_ENV}:latest
-    container_name: reembolso-frontend-${APP_ENV}
+    image: reembolso-frontend-${APP_ENV:-local}:latest
+    container_name: reembolso-frontend-${APP_ENV:-local}
     restart: unless-stopped
     networks:
       - default
@@ -79,7 +85,7 @@ services:
 
 volumes:
   reembolso_data:
-    name: reembolso_data_${APP_ENV}
+    name: reembolso_data_${APP_ENV:-local}
 
 networks:
   dokploy-network:

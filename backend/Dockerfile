@@ -14,6 +14,17 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+# Leitura automática de comprovantes (OCR, roda tudo aqui dentro, nada sai do
+# servidor): Tesseract com o português. Antes do COPY do código para ficar em
+# cache entre os deploys.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-por \
+    && rm -rf /var/lib/apt/lists/*
+
+# Cada leitura usa um núcleo só: o servidor é compartilhado com outros sistemas
+# (o limite de leituras ao mesmo tempo fica em app/config.py).
+ENV OMP_THREAD_LIMIT=1
+
 COPY --from=builder /install /usr/local
 
 # Código da aplicação — testes, caches e requirements-dev ficam de fora
@@ -23,9 +34,9 @@ COPY . .
 
 # /data: volume com os arquivos das notas enquanto o storage for "local"
 # (sobrescrito pelo volume em runtime).
-RUN mkdir -p /data
-
-RUN useradd -m appuser && chown -R appuser:appuser /app /data
+# O código fica do root (só leitura para a aplicação) e só o /data é do appuser:
+# um chown -R em /app duplicaria todo o código numa camada nova da imagem.
+RUN useradd -m appuser && mkdir -p /data && chown appuser:appuser /data
 USER appuser
 
 EXPOSE 8000

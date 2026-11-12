@@ -1,0 +1,252 @@
+.notas {
+  display: grid;
+  gap: 12px;
+}
+
+.nota {
+  margin: 0;
+  min-width: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-3);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+}
+
+.notaCabecalho {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 600;
+  font-size: 15px;
+}
+
+.linha {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1.3fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
+@media (max-width: 720px) {
+  .linha {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.percurso {
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+}
+
+.percurso > div {
+  width: 100%;
+}
+
+.ponto {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ponto input {
+  flex: 1;
+}
+
+.resumoKm {
+  margin: 0;
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+}
+
+.remover {
+  background: none;
+  border: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 14px;
+  min-height: var(--alvo-toque);
+  padding: 0 var(--space-2);
+  text-decoration: underline;
+}
+
+.remover:hover {
+  color: var(--color-danger);
+}
+
+.rodape {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.total {
+  font-size: 20px;
+  line-height: 26px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.total span {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+/* O campo de arquivo tem largura mínima própria e empurrava a nota para fora
+   da tela no celular. */
+.nota input,
+.nota select {
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+/* Anexo da nota: a foto é o passo mais importante no celular. */
+.anexo {
+  border: 2px dashed var(--color-border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-sunken);
+  padding: var(--space-4);
+}
+
+.anexo label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.nota .anexo input[type='file'][id] {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  min-height: var(--alvo-toque);
+  font-size: 14px;
+}
+
+.anexo input[type='file']::file-selector-button {
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  min-height: var(--alvo-toque);
+  padding: 10px 18px;
+  margin-right: var(--space-3);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--color-botao);
+  color: var(--color-on-botao);
+  cursor: pointer;
+}
+
+.anexo input[type='file']::file-selector-button:hover {
+  background: var(--color-botao-hover);
+}
+
+.miniatura {
+  max-height: 200px;
+  max-width: 100%;
+  object-fit: contain;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  align-self: flex-start;
+}
+
+.alerta {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+/* ----- Leitura automática do comprovante -------------------------------- */
+.leitura {
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-start;
+  margin: 0;
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--color-tecnored-primary-dark);
+}
+
+.leitura svg {
+  flex: none;
+  margin-top: 1px;
+}
+
+.leituraFalhou {
+  color: var(--color-warning);
+}
+
+.leituraDetalhe {
+  display: block;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--color-text-muted);
+  overflow-wrap: anywhere;
+}
+
+.leituraAviso {
+  color: var(--color-warning);
+}
+
+.girando {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  border: 2px solid var(--color-border);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: girar 0.8s linear infinite;
+}
+
+@keyframes girar {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .girando {
+    animation: none;
+  }
+}
+
+/* Selo ao lado do rótulo do campo preenchido pela leitura. */
+.selo {
+  display: inline-block;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--color-tecnored-bg-soft);
+  color: var(--color-tecnored-primary-dark);
+  font-size: 12px;
+  line-height: 20px;
+  font-weight: 600;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.seloConfira {
+  background: var(--color-warning-bg);
+  color: var(--color-warning);
+}
+
+/* Os :not() vencem a regra geral de `.campo input` do ui.module.css. */
+.nota select.campoLido,
+.nota input.campoLido:not([type='checkbox']):not([type='radio']) {
+  border-color: var(--color-tecnored-primary-light);
+  background-color: var(--color-tecnored-bg-mute);
+}
+
+.nota select.campoConfira,
+.nota input.campoConfira:not([type='checkbox']):not([type='radio']) {
+  border-color: var(--color-warning);
+  background-color: var(--color-warning-bg);
+}

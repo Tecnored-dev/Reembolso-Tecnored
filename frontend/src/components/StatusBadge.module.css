@@ -1,0 +1,43 @@
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 3px 10px 3px 7px;
+  border-radius: var(--radius-pill);
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 700;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+/* Famílias: com quem está o pedido agora */
+.voce {
+  background: var(--color-status-voce-bg);
+  color: var(--color-status-voce);
+}
+
+.financeiro {
+  background: var(--color-status-financeiro-bg);
+  color: var(--color-status-financeiro);
+}
+
+.gestor {
+  background: var(--color-status-gestor-bg);
+  color: var(--color-status-gestor);
+}
+
+.concluido {
+  background: var(--color-status-concluido-bg);
+  color: var(--color-status-concluido);
+}
+
+.cancelado {
+  background: var(--color-status-cancelado-bg);
+  color: var(--color-status-cancelado);
+}
+
+.recusado {
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+}

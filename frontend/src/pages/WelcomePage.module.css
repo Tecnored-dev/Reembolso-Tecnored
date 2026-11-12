@@ -1,79 +1,79 @@
+/* O fundo vem de config.bg_color e indica o ambiente (local, hml, produção). */
 .page {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 40px 20px;
-  font-family: 'Segoe UI', sans-serif;
+  padding: var(--space-8) var(--space-4);
   transition: background 0.3s;
 }
 
 .card {
-  background: white;
-  border-radius: 16px;
-  padding: 56px 48px;
-  max-width: 460px;
+  background: var(--color-surface);
+  border-radius: var(--radius-lg);
+  padding: var(--space-12) var(--space-8);
+  max-width: 440px;
   width: 100%;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+  box-shadow: var(--shadow-md);
   text-align: center;
 }
 
 .logo {
-  font-size: 0.75rem;
-  font-weight: 700;
-  letter-spacing: 3px;
-  text-transform: uppercase;
-  color: #aaa;
-  margin-bottom: 32px;
+  height: 40px;
+  width: auto;
+  margin: 0 auto var(--space-8);
 }
 
 .title {
-  font-size: 2rem;
+  font-size: 32px;
+  line-height: 36px;
   font-weight: 700;
-  color: #1a1a2e;
-  margin-bottom: 12px;
-  line-height: 1.2;
+  letter-spacing: -0.01em;
+  color: var(--color-text);
+  margin-bottom: var(--space-3);
 }
 
-
 .welcomeMsg {
-  font-size: 0.92rem;
-  color: #888;
-  line-height: 1.6;
-  margin-bottom: 40px;
+  font-size: 16px;
+  line-height: 24px;
+  color: var(--color-text-muted);
+  margin-bottom: var(--space-8);
 }
 
 .errorNote {
-  background: #fee2e2;
-  color: #b91c1c;
-  border-radius: 8px;
-  padding: 10px 14px;
-  font-size: 0.82rem;
-  margin-bottom: 20px;
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) 14px;
+  font-size: 15px;
+  line-height: 22px;
+  margin-bottom: var(--space-5);
   text-align: left;
 }
 
+/* Botão de entrada: a marca da Microsoft pede fundo neutro, não a nossa cor. */
 .btnMicrosoft {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 12px;
+  gap: var(--space-3);
   width: 100%;
-  padding: 14px 24px;
-  background: #0078d4;
-  color: white;
-  border: none;
-  border-radius: 8px;
-  font-size: 0.95rem;
+  min-height: 52px;
+  padding: 12px var(--space-6);
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  font-size: 16px;
   font-weight: 600;
   cursor: pointer;
   text-decoration: none;
-  transition: background 0.2s;
 }
 
 .btnMicrosoft:hover {
-  background: #006cbd;
+  background: var(--color-surface-sunken);
+  color: var(--color-text);
   text-decoration: none;
 }
 
@@ -87,15 +87,15 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
-  padding: 8px 0 4px;
+  gap: var(--space-3);
+  padding: var(--space-2) 0 var(--space-1);
 }
 
 .ssoSpinner {
   width: 32px;
   height: 32px;
-  border: 3px solid #e5e5e5;
-  border-top-color: #0078d4;
+  border: 3px solid var(--color-border);
+  border-top-color: var(--color-tecnored-primary);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
@@ -107,43 +107,54 @@
 }
 
 .ssoMessage {
-  font-size: 0.95rem;
+  font-size: 16px;
   font-weight: 600;
-  color: #1a1a2e;
+  color: var(--color-text);
 }
 
 .ssoCount {
-  font-size: 1.8rem;
+  font-size: 28px;
   font-weight: 700;
-  color: #0078d4;
+  color: var(--color-tecnored-primary);
   line-height: 1;
+  font-variant-numeric: tabular-nums;
 }
 
 .footerNote {
-  margin-top: 28px;
-  font-size: 0.78rem;
-  color: #bbb;
-  line-height: 1.5;
+  margin-top: var(--space-6);
+  font-size: 14px;
+  color: var(--color-text-muted);
+  line-height: 20px;
 }
 
 .pageFooter {
-  margin-top: 32px;
-  font-size: 0.72rem;
-  color: rgba(255, 255, 255, 0.4);
+  margin-top: var(--space-8);
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.75);
   text-align: center;
 }
 
 .btnDev {
-  display: block;
-  margin-top: 12px;
-  padding: 10px 24px;
-  border: 1px dashed #bbb;
-  border-radius: 8px;
-  color: #666;
-  font-size: 0.85rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--alvo-toque);
+  margin-top: var(--space-3);
+  padding: 10px var(--space-6);
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius-md);
+  color: var(--color-text-muted);
+  font-size: 15px;
 }
 
 .btnDev:hover {
-  background: #f5f5f5;
+  background: var(--color-surface-sunken);
+  color: var(--color-text);
   text-decoration: none;
+}
+
+@media (max-width: 640px) {
+  .card {
+    padding: var(--space-8) var(--space-5);
+  }
 }

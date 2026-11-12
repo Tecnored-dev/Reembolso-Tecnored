@@ -1,0 +1,246 @@
+"""Solicitação de reembolso, despesas (notas), histórico e caixa de saída de e-mails.
+
+Uma `Solicitacao` serve para todos os tipos: "alimentacao" (uma nota) e
+"viagem" (reembolso de viagem, várias notas) e "adiantamento" (diárias pagas
+antes da viagem; depois, a prestação de contas com as notas).
+Dados do solicitante que podem mudar com o tempo (matrícula, centro de custo,
+empresa) são COPIADOS no envio, para o histórico não mudar
+se a pessoa trocar de área.
+"""
+
+from __future__ import annotations
+
+from datetime import date, datetime
+from decimal import Decimal
+
+from sqlalchemy import (
+    Boolean,
+    Date,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    Numeric,
+    String,
+    Text,
+)
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.db import Base
+
+DINHEIRO = Numeric(12, 2)
+
+
+class Solicitacao(Base):
+    __tablename__ = "solicitacoes"
+
+    @property
+    def diaria_complementar(self) -> bool:
+        return self.valor_complementar is not None
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    codigo: Mapped[str | None] = mapped_column(String(20), nullable=True, unique=True)
+    tipo: Mapped[str] = mapped_column(String(30), nullable=False)
+    status: Mapped[str] = mapped_column(String(30), nullable=False)
+
+    # Quem RECEBE o reembolso. Num pedido em nome de outra pessoa, é ela; quem
+    # preencheu fica em `criado_por_*` (vazio quando a pessoa pediu para si).
+    solicitante_email: Mapped[str] = mapped_column(String(254), nullable=False)
+    solicitante_nome: Mapped[str] = mapped_column(String(200), nullable=False)
+    criado_por_email: Mapped[str | None] = mapped_column(String(254), nullable=True)
+    criado_por_nome: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    matricula: Mapped[str] = mapped_column(String(30), nullable=False)
+    # Ex.: "3350 - T.I / T.A". Escolhido em cada pedido (Thais, 15/10); o
+    # adiantamento não tem centro de custo (nulo).
+    centro_custo: Mapped[str | None] = mapped_column(String(140), nullable=True)
+    empresa: Mapped[str] = mapped_column(String(120), nullable=False)
+
+    gestor_email: Mapped[str | None] = mapped_column(String(254), nullable=True)
+    gestor_nome: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # Solicitante é gestor: pula a aprovação de gestor (regra de 06/10/2026).
+    pula_gestor: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+    descricao: Mapped[str] = mapped_column(Text, nullable=False)
+    # Alimentação e despesas diversas: motivo (lista do ARGO) e, só na
+    # alimentação, onde foi a refeição (define o limite do alerta).
+    motivo: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    local_refeicao: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # Só em viagem: para onde e quando foi (a justificativa fica em `descricao`).
+    destino: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    viagem_inicio: Mapped[date | None] = mapped_column(Date, nullable=True)
+    viagem_fim: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # Diária de viagem: "Viagem internacional?" (internacional não tem diária).
+    viagem_internacional: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # Adiantamento: o valor adiantado (informado pelo colaborador desde 15/10)
+    # fica em `valor_total`; o gasto comprovado, em `valor_gasto`. `diarias` e
+    # `valor_complementar` só existem nos pedidos antigos (calculados por dia).
+    diarias: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Diária complementar (quem recebe auxílio refeição): valor informado pelo
+    # colaborador, somado às diárias normais (já incluído em `valor_total`).
+    valor_complementar: Mapped[Decimal | None] = mapped_column(DINHEIRO, nullable=True)
+    valor_gasto: Mapped[Decimal | None] = mapped_column(DINHEIRO, nullable=True)
+    prestacao_enviada_em: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    prestacao_conferida_por: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    prestacao_conferida_em: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    devolucao_confirmada_por: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    devolucao_confirmada_em: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    diferenca_aprovada_por: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    diferenca_aprovada_em: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    data_pagamento_diferenca: Mapped[date | None] = mapped_column(Date, nullable=True)
+    encerrado_em: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    lembrete_prestacao_em: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    aviso_prestacao_vencida_em: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    moeda: Mapped[str] = mapped_column(String(3), nullable=False, default="BRL")
+    valor_total: Mapped[Decimal] = mapped_column(DINHEIRO, nullable=False)
+    alerta_limite: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    enviado_em: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    conferido_por: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    conferido_em: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    aprovado_por: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    aprovado_em: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    pago_por: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    pago_em: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    data_pagamento: Mapped[date | None] = mapped_column(Date, nullable=True)
+
+    devolvido_por: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    devolvido_em: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    motivo_devolucao: Mapped[str | None] = mapped_column(Text, nullable=True)
+    lembrete_expiracao_em: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Recusa do gestor (Thais, 15/10): finaliza o pedido.
+    recusado_por: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    recusado_em: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    motivo_recusa: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cancelado_em: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    motivo_cancelamento: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    ultima_movimentacao_em: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+    despesas: Mapped[list[Despesa]] = relationship(
+        back_populates="solicitacao",
+        cascade="all, delete-orphan",
+        order_by="Despesa.id",
+        lazy="selectin",
+    )
+    # Diária de viagem: linhas de valor integral/parcial (sem nota nem arquivo).
+    linhas_diaria: Mapped[list[LinhaDiaria]] = relationship(
+        back_populates="solicitacao",
+        cascade="all, delete-orphan",
+        order_by="LinhaDiaria.id",
+        lazy="selectin",
+    )
+    historico: Mapped[list[Historico]] = relationship(
+        back_populates="solicitacao",
+        cascade="all, delete-orphan",
+        order_by="Historico.id",
+        lazy="selectin",
+    )
+
+    __table_args__ = (
+        Index("ix_solicitacoes_status", "status"),
+        Index("ix_solicitacoes_solicitante", "solicitante_email"),
+        Index("ix_solicitacoes_gestor", "gestor_email"),
+        Index("ix_solicitacoes_criado_por", "criado_por_email"),
+    )
+
+
+class Despesa(Base):
+    """Uma nota fiscal. Alimentação tem exatamente uma; viagem, uma ou mais.
+
+    No adiantamento, as notas são as da prestação de contas, e o comprovante da
+    transferência da sobra também fica aqui, com a categoria
+    `comprovante_devolucao` (não entra na soma do gasto).
+    """
+
+    __tablename__ = "despesas"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    solicitacao_id: Mapped[int] = mapped_column(
+        ForeignKey("solicitacoes.id", ondelete="CASCADE"), nullable=False
+    )
+    categoria: Mapped[str] = mapped_column(String(40), nullable=False)
+    data_despesa: Mapped[date] = mapped_column(Date, nullable=False)
+    valor: Mapped[Decimal] = mapped_column(DINHEIRO, nullable=False)
+    descricao: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # Chave no armazenamento de arquivos (app/storage), nunca o arquivo em si.
+    # Vazios só na quilometragem (não tem comprovante).
+    arquivo_chave: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    arquivo_nome: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    arquivo_tipo: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    arquivo_tamanho: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Quilometragem: km informados e percurso (lista JSON de endereços:
+    # origem, paradas, destino). Nas demais notas ficam vazios.
+    km: Mapped[Decimal | None] = mapped_column(Numeric(8, 1), nullable=True)
+    percurso: Mapped[str | None] = mapped_column(Text, nullable=True)
+    criado_em: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+    solicitacao: Mapped[Solicitacao] = relationship(back_populates="despesas")
+
+    __table_args__ = (Index("ix_despesas_solicitacao", "solicitacao_id"),)
+
+
+class LinhaDiaria(Base):
+    """Uma linha da Diária de Viagem: `quantidade` diárias a `valor_unitario`.
+
+    "integral" usa o valor fixo da diária; "parcial" usa o valor informado.
+    """
+
+    __tablename__ = "linhas_diaria"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    solicitacao_id: Mapped[int] = mapped_column(
+        ForeignKey("solicitacoes.id", ondelete="CASCADE"), nullable=False
+    )
+    tipo: Mapped[str] = mapped_column(String(10), nullable=False)  # integral | parcial
+    quantidade: Mapped[int] = mapped_column(Integer, nullable=False)
+    valor_unitario: Mapped[Decimal] = mapped_column(DINHEIRO, nullable=False)
+
+    solicitacao: Mapped[Solicitacao] = relationship(back_populates="linhas_diaria")
+
+    __table_args__ = (Index("ix_linhas_diaria_solicitacao", "solicitacao_id"),)
+
+
+class Historico(Base):
+    """Quem fez o quê e quando — trilha de auditoria de cada solicitação."""
+
+    __tablename__ = "historico"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    solicitacao_id: Mapped[int] = mapped_column(
+        ForeignKey("solicitacoes.id", ondelete="CASCADE"), nullable=False
+    )
+    acao: Mapped[str] = mapped_column(String(40), nullable=False)
+    status_de: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    status_para: Mapped[str] = mapped_column(String(30), nullable=False)
+    usuario_email: Mapped[str] = mapped_column(String(254), nullable=False)
+    usuario_nome: Mapped[str] = mapped_column(String(200), nullable=False)
+    comentario: Mapped[str | None] = mapped_column(Text, nullable=True)
+    criado_em: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+    solicitacao: Mapped[Solicitacao] = relationship(back_populates="historico")
+
+    __table_args__ = (Index("ix_historico_solicitacao", "solicitacao_id"),)
+
+
+class Notificacao(Base):
+    """Caixa de saída de e-mails.
+
+    O sistema grava aqui a cada mudança de status; quem ENVIA é um passo
+    separado, que entra quando a TI definir a conta/SMTP. Assim nenhum aviso
+    se perde enquanto isso, e falha de e-mail nunca trava uma aprovação.
+    """
+
+    __tablename__ = "notificacoes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    solicitacao_id: Mapped[int | None] = mapped_column(
+        ForeignKey("solicitacoes.id", ondelete="SET NULL"), nullable=True
+    )
+    para: Mapped[str] = mapped_column(Text, nullable=False)  # e-mails separados por vírgula
+    assunto: Mapped[str] = mapped_column(String(250), nullable=False)
+    corpo: Mapped[str] = mapped_column(Text, nullable=False)
+    criado_em: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    enviado_em: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    erro: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    __table_args__ = (Index("ix_notificacoes_pendentes", "enviado_em"),)
